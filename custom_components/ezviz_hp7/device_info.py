@@ -22,6 +22,16 @@ DEFAULT_MODEL = "HP7"
 _KNOWN_MODELS = ("HPD5", "HP5", "CP5", "HP7", "CP7", "HP4", "DP1", "DP2")
 
 
+# HP5 monitor ringtones are shown 1..20 in the app; ChimeMusic.doorbell stores
+# app_value - HP5_RINGTONE_OFFSET (offset confirmed on a live HPD5, fw V5.3.6).
+HP5_RINGTONE_MIN = 1
+HP5_RINGTONE_MAX = 20
+HP5_RINGTONE_OFFSET = 1
+# ChimeMusic writes must target channel 0 on the HP5 family (channel 1 is
+# accepted by the cloud but never reaches the monitor).
+HP5_CHIME_WRITE_CHANNEL = 0
+
+
 def is_hp5_family(model: str | None) -> bool:
     """True for HP5 / HPD5 / CP5 doorphones.
 

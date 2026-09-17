@@ -523,6 +523,11 @@ class Hp7Api:
             return value
         return None
 
+    # Channel used for ChimeMusic writes. HP7: 1. HP5 family: 0 (set from
+    # __init__ after model detection; the cloud returns 200 on channel 1 but
+    # the monitor only applies writes on channel 0).
+    chime_write_channel: int = 1
+
     def _set_chime_fields(self, serial: str, **fields: int) -> bool:
         """Patch one or more ChimeMusic fields, preserving the rest."""
         self.ensure_client()
@@ -533,7 +538,7 @@ class Hp7Api:
         value = json.dumps(config, separators=(",", ":"))
         url = (
             f"https://{self._url}/v3/devconfig/v1/keyValue"
-            f"/{serial}/1/op"
+            f"/{serial}/{self.chime_write_channel}/op"
         )
         params = {"key": "ChimeMusic", "value": value}
         try:
@@ -623,7 +628,7 @@ class Hp7Api:
         value = json.dumps(config, separators=(",", ":"))
         url = (
             f"https://{self._url}/v3/devconfig/v1/keyValue"
-            f"/{serial}/1/op"
+            f"/{serial}/{self.chime_write_channel}/op"
         )
         params = {"key": "ChimeMusic", "value": value}
         try:

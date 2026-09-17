@@ -9,7 +9,12 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .device_info import is_hp5_family
+from .device_info import (
+    HP5_RINGTONE_MAX,
+    HP5_RINGTONE_MIN,
+    HP5_RINGTONE_OFFSET,
+    is_hp5_family,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +29,17 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = data["coordinator"]
 
     entities: list[NumberEntity] = []
-    if not is_hp5_family(model):
+    hp5 = is_hp5_family(model)
+    ring_kwargs: dict[str, Any] = (
+        {
+            "min_value": HP5_RINGTONE_MIN,
+            "max_value": HP5_RINGTONE_MAX,
+            "offset": HP5_RINGTONE_OFFSET,
+        }
+        if hp5
+        else {}
+    )
+    if not hp5:
         # On HP5/HPD5 the composite serial's ChimeMusic is inert (volume is a
         # 0-100 value the app can't change, doorbell_enable stuck at 0); the
         # real chime config is on the monitor serial and handled below.
@@ -59,6 +74,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 model=f"{model} Monitor",
                 translation_key="chime_ringtone_monitor",
                 value_key="chime_ringtone_monitors",
+                **ring_kwargs,
             )
         )
         entities.append(
@@ -69,6 +85,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 model=f"{model} Monitor",
                 translation_key="chime_pir_ringtone_monitor",
                 value_key="chime_pir_ringtone_monitors",
+                **ring_kwargs,
             )
         )
 
@@ -163,6 +180,9 @@ class _RingtoneBase(CoordinatorEntity, NumberEntity):
         value_key: str,
         camera_state_key: str,
         setter_name: str,
+        min_value: int | None = None,
+        max_value: int | None = None,
+        offset: int = 0,
     ) -> None:
         super().__init__(coordinator)
         self._api = api
@@ -171,6 +191,13 @@ class _RingtoneBase(CoordinatorEntity, NumberEntity):
         self._value_key = value_key
         self._camera_state_key = camera_state_key
         self._setter_name = setter_name
+        # Displayed value = stored field + offset (HP5 monitor: app shows
+        # 1..20, ChimeMusic stores 0..19).
+        self._offset = offset
+        if min_value is not None:
+            self._attr_native_min_value = min_value
+        if max_value is not None:
+            self._attr_native_max_value = max_value
         self._attr_translation_key = translation_key
         self._attr_unique_id = f"{DOMAIN}_{serial}_{translation_key}"
 
@@ -190,12 +217,12 @@ class _RingtoneBase(CoordinatorEntity, NumberEntity):
         if val is None:
             return None
         try:
-            return float(val)
+            return float(val) + self._offset
         except (TypeError, ValueError):
             return None
 
     async def async_set_native_value(self, value: float) -> None:
-        target = max(0, int(round(value)))
+        target = max(0, int(round(value)) - self._offset)
         setter = getattr(self._api, self._setter_name)
         ok = await self.hass.async_add_executor_job(setter, self._serial, target)
         if ok:
@@ -219,6 +246,7 @@ class EzvizHp7ChimeRingtone(_RingtoneBase):
         model: str = "HP7",
         translation_key: str = "chime_ringtone",
         value_key: str = "chime_ringtone",
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             coordinator,
@@ -229,6 +257,7 @@ class EzvizHp7ChimeRingtone(_RingtoneBase):
             value_key=value_key,
             camera_state_key="chime_ringtone",
             setter_name="set_chime_ringtone",
+            **kwargs,
         )
 
 
@@ -242,6 +271,7 @@ class EzvizHp7ChimePirRingtone(_RingtoneBase):
         model: str = "HP7",
         translation_key: str = "chime_pir_ringtone",
         value_key: str = "chime_pir_ringtone",
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             coordinator,
@@ -252,4 +282,5 @@ class EzvizHp7ChimePirRingtone(_RingtoneBase):
             value_key=value_key,
             camera_state_key="chime_pir_ringtone",
             setter_name="set_chime_pir_ringtone",
+            **kwargs,
         )

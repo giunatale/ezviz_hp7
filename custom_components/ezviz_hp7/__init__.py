@@ -175,8 +175,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # cloud parent, see resourceInfos.superDeviceSerial). If no monitor was
     # configured, default to the part before the dash so the monitor-side
     # chime/volume/ringtone entities are created out of the box.
+    from .device_info import HP5_CHIME_WRITE_CHANNEL, is_hp5_family
+    if is_hp5_family(model):
+        api.chime_write_channel = HP5_CHIME_WRITE_CHANNEL
     if not monitor_serial and "-" in serial:
-        from .device_info import is_hp5_family
         if is_hp5_family(model):
             monitor_serial = [serial.split("-", 1)[0]]
             _LOGGER.info(
