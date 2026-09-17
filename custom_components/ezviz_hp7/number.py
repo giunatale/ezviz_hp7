@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
@@ -95,7 +96,30 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(entities)
 
 
-class EzvizHp7ChimeVolume(CoordinatorEntity, NumberEntity):
+class _OptimisticValueMixin:
+    """Hold a just-written slider value for a short grace window.
+
+    Same idea as the switches' _OptimisticStateMixin: the EZVIZ cloud takes a
+    few seconds to reflect a devconfig write, so the poll right after a set
+    would snap the slider back to the old value.
+    """
+
+    _OPTIMISTIC_GRACE = 20.0
+    _opt_value: float | None = None
+    _opt_until: float = 0.0
+
+    def _mark_optimistic(self, value: float) -> None:
+        self._opt_value = value
+        self._opt_until = time.monotonic() + self._OPTIMISTIC_GRACE
+        self.async_write_ha_state()
+
+    def _shield_stale(self, coordinator_value: float | None) -> float | None:
+        if time.monotonic() < self._opt_until:
+            return self._opt_value
+        return coordinator_value
+
+
+class EzvizHp7ChimeVolume(_OptimisticValueMixin, CoordinatorEntity, NumberEntity):
     """Slider 0-7 for the ChimeMusic ``volume`` field."""
 
     _attr_has_entity_name = True
@@ -136,9 +160,9 @@ class EzvizHp7ChimeVolume(CoordinatorEntity, NumberEntity):
             mapping = data.get(self._value_key) or {}
             val = mapping.get(self._serial) if isinstance(mapping, dict) else None
         if val is None:
-            return None
+            return self._shield_stale(None)
         try:
-            return float(val)
+            return self._shield_stale(float(val))
         except (TypeError, ValueError):
             return None
 
@@ -148,6 +172,7 @@ class EzvizHp7ChimeVolume(CoordinatorEntity, NumberEntity):
             self._api.set_chime_volume, self._serial, target
         )
         if ok:
+            self._mark_optimistic(float(target))
             await self.coordinator.async_request_refresh()
         else:
             _LOGGER.error(
@@ -157,7 +182,7 @@ class EzvizHp7ChimeVolume(CoordinatorEntity, NumberEntity):
             )
 
 
-class _RingtoneBase(CoordinatorEntity, NumberEntity):
+class _RingtoneBase(_OptimisticValueMixin, CoordinatorEntity, NumberEntity):
     """Shared scaffolding for the ringtone selectors.
 
     The HP7 firmware reports the active ringtone as an integer index. The
@@ -218,9 +243,9 @@ class _RingtoneBase(CoordinatorEntity, NumberEntity):
             mapping = data.get(self._value_key) or {}
             val = mapping.get(self._serial) if isinstance(mapping, dict) else None
         if val is None:
-            return None
+            return self._shield_stale(None)
         try:
-            return float(val) + self._offset
+            return self._shield_stale(float(val) + self._offset)
         except (TypeError, ValueError):
             return None
 
@@ -229,6 +254,7 @@ class _RingtoneBase(CoordinatorEntity, NumberEntity):
         setter = getattr(self._api, self._setter_name)
         ok = await self.hass.async_add_executor_job(setter, self._serial, target)
         if ok:
+            self._mark_optimistic(float(target + self._offset))
             await self.coordinator.async_request_refresh()
         else:
             _LOGGER.error(

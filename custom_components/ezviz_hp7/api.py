@@ -618,26 +618,13 @@ class Hp7Api:
             return None
 
     def set_chime_volume(self, serial: str, volume: int) -> bool:
-        """Set ChimeMusic volume (0-7), preserving other fields."""
-        self.ensure_client()
-        if not self._client:
-            return False
-        volume = max(0, min(7, int(volume)))
-        current = self._get_chime_config(serial) or {}
-        config = {**self._CHIME_DEFAULTS, **current, "volume": volume}
-        value = json.dumps(config, separators=(",", ":"))
-        url = (
-            f"https://{self._url}/v3/devconfig/v1/keyValue"
-            f"/{serial}/{self.chime_write_channel}/op"
-        )
-        params = {"key": "ChimeMusic", "value": value}
-        try:
-            resp = self._client._session.put(url, params=params, timeout=15)
-            resp.raise_for_status()
-            return True
-        except (RequestException, ValueError) as exc:
-            _LOGGER.error("EZVIZ HP7: set_chime_volume failed: %s", exc)
-            return False
+        """Set ChimeMusic volume (0-7), preserving other fields.
+
+        Routed through _set_chime_fields so the cached ChimeMusic blob is
+        invalidated; the previous standalone PUT left the 60 s cache stale,
+        so the slider snapped back to the old value until the cache expired.
+        """
+        return self._set_chime_fields(serial, volume=max(0, min(7, int(volume))))
 
     # ------------------------------------------------------------------
     # DND / Privacy / Defence — wrappers around pylocalapi calls
