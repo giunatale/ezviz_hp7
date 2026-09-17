@@ -64,6 +64,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 model=f"{model} Monitor",
             )
         )
+        if hp5:
+            # No motion-alert chime on HP5 monitors (not in the app, field inert).
+            continue
         entities.append(
             EzvizHp7ChimePirSwitch(
                 coordinator,
