@@ -77,17 +77,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 **ring_kwargs,
             )
         )
-        entities.append(
-            EzvizHp7ChimePirRingtone(
-                coordinator,
-                api,
-                ms,
-                model=f"{model} Monitor",
-                translation_key="chime_pir_ringtone_monitor",
-                value_key="chime_pir_ringtone_monitors",
-                **ring_kwargs,
+        if not hp5:
+            # HP5 monitors have no PIR/motion ringtone in the app; the field
+            # exists in ChimeMusic but is inert.
+            entities.append(
+                EzvizHp7ChimePirRingtone(
+                    coordinator,
+                    api,
+                    ms,
+                    model=f"{model} Monitor",
+                    translation_key="chime_pir_ringtone_monitor",
+                    value_key="chime_pir_ringtone_monitors",
+                    **ring_kwargs,
+                )
             )
-        )
 
     async_add_entities(entities)
 
