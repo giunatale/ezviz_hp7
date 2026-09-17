@@ -19,7 +19,18 @@ DEFAULT_MODEL = "HP7"
 
 # Friendly labels for known deviceSubCategory / deviceType prefixes.
 # Extend as more siblings appear.
-_KNOWN_MODELS = ("HP7", "CP7", "HP4", "DP1", "DP2")
+_KNOWN_MODELS = ("HPD5", "HP5", "CP5", "HP7", "CP7", "HP4", "DP1", "DP2")
+
+
+def is_hp5_family(model: str | None) -> bool:
+    """True for HP5 / HPD5 / CP5 doorphones.
+
+    On these the outdoor unit's ring sound is SWITCH type 39 and the
+    ChimeMusic devconfig blob lives on the *monitor* serial only; the
+    composite serial carries an inert copy (doorbell_enable stuck at 0,
+    volume on a 0-100 scale nobody can change from the app).
+    """
+    return bool(model) and model.upper().startswith(("HPD5", "HP5", "CP5"))
 
 
 def detect_model(api: Any, serial: str) -> str:

@@ -642,6 +642,24 @@ class Hp7Api:
     _PRIVACY_SWITCH_TYPE = 7
     # SwitchType.CHIME_INDICATOR_LIGHT (HP7 doorbell label/name LED) = 611.
     _LABEL_LIGHT_SWITCH_TYPE = 611
+    # SwitchType.OUTDOOR_RINGING_SOUND = 39: the outdoor unit's "Doorbell
+    # Ring Sound" toggle on HP5/HPD5 (confirmed by diffing the pagelist
+    # while flipping it in the app; the app writes it on channel 0).
+    _RING_SOUND_SWITCH_TYPE = 39
+
+    def set_ring_sound(self, serial: str, enable: bool) -> bool:
+        """Toggle the outdoor unit's ring sound via SWITCH 39 (HP5 family)."""
+        self.ensure_client()
+        if not self._client:
+            return False
+        try:
+            self._client.switch_status(
+                serial, self._RING_SOUND_SWITCH_TYPE, bool(enable), channel_no=0
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("EZVIZ HP7: ring sound switch 39 failed: %s", exc)
+            return False
 
     def set_dnd(self, serial: str, enable: bool) -> bool:
         """Toggle Do-Not-Disturb on the device."""
@@ -1185,6 +1203,10 @@ class Hp7Api:
                     coerced = self._coerce_bool(sw.get("enable"))
                     if coerced is not None:
                         out["label_light_on"] = coerced
+                elif s_type == self._RING_SOUND_SWITCH_TYPE:
+                    coerced = self._coerce_bool(sw.get("enable"))
+                    if coerced is not None:
+                        out["ring_sound_on"] = coerced
 
         # HPD7 name-plate LED lives in the IoT FEATURE tree, not SWITCH 611
         # (#34): FEATURE_INFO["1"]["LightCtrl"]["NightLightEnable"]. When

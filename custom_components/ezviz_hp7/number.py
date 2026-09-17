@@ -9,6 +9,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .device_info import is_hp5_family
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,11 +24,15 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = data["coordinator"]
 
     entities: list[NumberEntity] = []
-    entities.append(EzvizHp7ChimeVolume(coordinator, api, serial, model=model))
-    entities.append(EzvizHp7ChimeRingtone(coordinator, api, serial, model=model))
-    entities.append(
-        EzvizHp7ChimePirRingtone(coordinator, api, serial, model=model)
-    )
+    if not is_hp5_family(model):
+        # On HP5/HPD5 the composite serial's ChimeMusic is inert (volume is a
+        # 0-100 value the app can't change, doorbell_enable stuck at 0); the
+        # real chime config is on the monitor serial and handled below.
+        entities.append(EzvizHp7ChimeVolume(coordinator, api, serial, model=model))
+        entities.append(EzvizHp7ChimeRingtone(coordinator, api, serial, model=model))
+        entities.append(
+            EzvizHp7ChimePirRingtone(coordinator, api, serial, model=model)
+        )
 
     monitors: list[str] = []
     if isinstance(monitor_serial, str) and monitor_serial.strip():
