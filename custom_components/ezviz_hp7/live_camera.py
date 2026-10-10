@@ -524,8 +524,19 @@ def _sender_thread(
     stop: threading.Event,
     label: str,
     on_drain: Any = None,
+    drop_backlog: bool = False,
 ) -> None:
-    """Wait for ffmpeg to connect, then forward the queue into that socket."""
+    """Wait for ffmpeg to connect, then forward the queue into that socket.
+
+    drop_backlog: discard whatever queued up before ffmpeg connected. Used
+    for audio: ffmpeg opens its inputs one after the other, so the audio
+    queue fills while it is still probing the video input, and that backlog
+    then arrives as one burst. Re-timestamped by arrival (wall clock), a
+    burst squeezes seconds of audio into a few milliseconds and runs
+    backwards against the live audio after it. HA's stream worker (HLS,
+    which Google casting uses) then cannot read the video parameters within
+    its probe window and fails with "Error muxing first keyframe".
+    """
     try:
         listener.settimeout(INPUT_ACCEPT_TIMEOUT)
         try:
@@ -536,6 +547,22 @@ def _sender_thread(
             )
             return
         _LOGGER.debug("Hp7StreamRelay: %s accepted from %s", label, peer)
+        if drop_backlog:
+            dropped = 0
+            while True:
+                try:
+                    item = q.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    q.put(None)  # keep the stop sentinel
+                    break
+                dropped += 1
+            if dropped:
+                _LOGGER.debug(
+                    "Hp7StreamRelay: %s dropped %d stale chunks at connect",
+                    label, dropped,
+                )
     finally:
         try:
             listener.close()
@@ -1799,10 +1826,16 @@ class Hp7StreamRelay:
                     # Peepholes: every viewer starts on a stream map + IDR with
                     # parameter sets, so there is nothing to wait for. A large
                     # probesize on a ~100 kbit/s stream is a wait of seconds.
+                    # Everyone else: 1 s. With a 10 s ceiling ffmpeg sat out the
+                    # whole window before its first output (measured: ~10.7 s
+                    # to first bytes on a 720p H.264 MPEG-PS at real-time
+                    # pace, ~1.7 s with 1 s), and the audio queue filled
+                    # meanwhile. Viewers start on the cached GOP (keyframe +
+                    # parameter sets), so 1 s of probing finds the stream.
                     *(
                         ["-analyzeduration", "0", "-probesize", "4096"]
                         if self.peephole
-                        else ["-analyzeduration", "10000000", "-probesize", "10000000"]
+                        else ["-analyzeduration", "1000000", "-probesize", "1000000"]
                     ),
                     # NO wall-clock re-timestamping on this input. It is a
                     # real MPEG-PS container that already carries correct
@@ -1960,6 +1993,7 @@ class Hp7StreamRelay:
                     threads.append(threading.Thread(
                         target=_sender_thread,
                         args=(a_listener, a_q, stop_event, "audio", _mk_drain(self._q_last_drain, a_q)),
+                        kwargs={"drop_backlog": True},
                         name=f"hp7-lan-asend-{self._serial}",
                         daemon=True,
                     ))
@@ -1975,6 +2009,7 @@ class Hp7StreamRelay:
                     threads.append(threading.Thread(
                         target=_sender_thread,
                         args=(a_listener, a_q, stop_event, "audio", _mk_drain(self._q_last_drain, a_q)),
+                        kwargs={"drop_backlog": True},
                         name=f"hp7-vtm-asend-{self._serial}",
                         daemon=True,
                     ))
