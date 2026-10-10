@@ -17,6 +17,10 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up EZVIZ HP7/CP7 switches."""
     data = hass.data[DOMAIN][entry.entry_id]
+    if data.get("cateye"):
+        # Peephole viewer: no lock relays, chime, DND/privacy/defence or
+        # doorbell settings to control.
+        return
     api = data["api"]
     serial = data["serial"]
     monitor_serial = data.get("monitor_serial")

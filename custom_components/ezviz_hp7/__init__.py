@@ -25,6 +25,7 @@ from .const import (
     STREAM_SOURCES,
     CONF_STREAM_MODE,
     STREAM_MODE_AUTO,
+    STREAM_MODE_MJPEG,
     STREAM_MODES,
     CONF_DIAGNOSTIC_DUMPS,
     CONF_ENCRYPTION_KEY,
@@ -34,7 +35,7 @@ from .const import (
 )
 from .api import Hp7Api
 from .coordinator import Hp7Coordinator
-from .device_info import DEFAULT_MODEL, detect_model
+from .device_info import DEFAULT_MODEL, detect_model_and_category, is_cateye
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,10 +171,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Detect device model (HP7 / CP7 / ...) from the cloud so DeviceInfo
     # shows the right label. Falls back to DEFAULT_MODEL on any error.
     try:
-        model = await hass.async_add_executor_job(detect_model, api, serial)
+        model, category = await hass.async_add_executor_job(
+            detect_model_and_category, api, serial
+        )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("Model detection failed (%s): %s", serial, exc)
-        model = DEFAULT_MODEL
+        model, category = DEFAULT_MODEL, None
+    cateye = is_cateye(category)
+    if cateye and stream_mode == STREAM_MODE_AUTO:
+        # "auto" probes the codec by opening a cloud stream at every startup,
+        # which wakes a battery peephole for nothing. Peepholes stream HEVC
+        # (CP2: 1080p HEVC, no audio), which only MJPEG can show in a browser.
+        stream_mode = STREAM_MODE_MJPEG
 
     # HP5/HPD5 composite serials are MONITOR-DOORBELL (the monitor is the
     # cloud parent, see resourceInfos.superDeviceSerial). If no monitor was
@@ -191,7 +200,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     coordinator = Hp7Coordinator(
-        hass, api, serial, monitor_serial, config_entry=entry
+        hass, api, serial, monitor_serial, config_entry=entry, cateye=cateye
     )
     try:
         await coordinator.async_config_entry_first_refresh()
@@ -205,6 +214,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "serial": serial,
         "monitor_serial": monitor_serial,
         "model": model,
+        "category": category,
+        "cateye": cateye,
         "relay_port": relay_port,
         "relay_bind": relay_bind,
         "aggressive_mpegts": aggressive_mpegts,

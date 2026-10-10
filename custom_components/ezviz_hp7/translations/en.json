@@ -93,6 +93,12 @@
       },
       "mic_volume": {
         "name": "Microphone Volume"
+      },
+      "battery_status": {
+        "name": "Battery status"
+      },
+      "last_offline": {
+        "name": "Last offline"
       }
     },
     "binary_sensor": {
@@ -140,6 +146,9 @@
       },
       "feature_human_detection": {
         "name": "Human Detection"
+      },
+      "encryption": {
+        "name": "Video encryption"
       }
     },
     "button": {

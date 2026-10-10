@@ -715,6 +715,9 @@ class Hp7StreamRelay:
         self._active_lan: bool = False
         self._idle_handle: Optional[asyncio.TimerHandle] = None
         self._active_clients: int = 0
+        # Seconds the shared cloud session survives its last client. Battery
+        # peepholes override this with CATEYE_IDLE_TIMEOUT.
+        self.idle_timeout: float = PREWARM_IDLE_TIMEOUT
 
     @property
     def port(self) -> int:
@@ -1339,7 +1342,7 @@ class Hp7StreamRelay:
             return
         loop = asyncio.get_event_loop()
         self._idle_handle = loop.call_later(
-            PREWARM_IDLE_TIMEOUT, self._idle_expired
+            self.idle_timeout, self._idle_expired
         )
 
     def _idle_expired(self) -> None:
@@ -1989,6 +1992,39 @@ class Hp7StreamRelay:
             _LOGGER.debug("Hp7StreamRelay: client %s closed", peer)
 
 
+def _jpeg_from_part(part: bytes) -> bytes | None:
+    """Cut the JPEG out of one multipart MJPEG part (boundary + headers)."""
+    start = part.find(b"\xff\xd8")
+    end = part.rfind(b"\xff\xd9")
+    if start < 0 or end <= start:
+        return None
+    return part[start : end + 2]
+
+
+def _read_last_frame(path: str) -> tuple[bytes, float] | None:
+    import os
+
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        return (data, os.path.getmtime(path)) if data else None
+    except OSError:
+        return None
+
+
+def _write_last_frame(path: str, data: bytes) -> None:
+    import os
+
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    except OSError as exc:
+        _LOGGER.debug("Hp7LiveCamera: could not store last frame: %s", exc)
+
+
 class Hp7LiveCamera(Camera):
     """Live H.264 + AAC stream from the HP7/CP7 via the VTM cloud relay."""
 
@@ -2002,6 +2038,7 @@ class Hp7LiveCamera(Camera):
         relay: Hp7StreamRelay,
         stream_mode: str = "mjpeg",
         ffmpeg_path: str = "ffmpeg",
+        last_frame_path: str | None = None,
     ) -> None:
         super().__init__()
         self._serial = serial
@@ -2010,6 +2047,40 @@ class Hp7LiveCamera(Camera):
         self._stream_mode = (stream_mode or "mjpeg").lower()
         self._ffmpeg_path = ffmpeg_path
         self._attr_unique_id = f"{DOMAIN}_{serial}_live"
+        # Battery peepholes: stills never open a stream. Instead the last
+        # frame of the most recent live view is kept (in memory and on disk,
+        # so it survives restarts) and served as the still, like the EZVIZ
+        # app's thumbnail. None for every other device.
+        self._last_frame_path = last_frame_path
+        self._last_frame: bytes | None = None
+        self._last_frame_at: float | None = None
+        self._session_frame: bytes | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._last_frame_path and self.hass is not None:
+            loaded = await self.hass.async_add_executor_job(
+                _read_last_frame, self._last_frame_path
+            )
+            if loaded is not None:
+                self._last_frame, self._last_frame_at = loaded
+
+    def _capture_frame(self, part: bytes) -> None:
+        """MJPEG hook: remember the newest frame sent during this view."""
+        self._session_frame = part
+
+    async def _store_session_frame(self) -> None:
+        part, self._session_frame = self._session_frame, None
+        jpeg = _jpeg_from_part(part) if part else None
+        if not jpeg:
+            return
+        self._last_frame = jpeg
+        self._last_frame_at = time.time()
+        if self._last_frame_path and self.hass is not None:
+            await self.hass.async_add_executor_job(
+                _write_last_frame, self._last_frame_path, jpeg
+            )
+        self.async_write_ha_state()
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -2040,11 +2111,20 @@ class Hp7LiveCamera(Camera):
         if not codec:
             cfg = self._relay._video_codec
             codec = cfg if cfg and cfg != "auto" else "unknown"
-        return {
+        attrs = {
             "stream_source": self._relay.active_source,
             "stream_mode": self._stream_mode,
             "video_codec": codec,
         }
+        if self._last_frame_path is not None:
+            from datetime import datetime, timezone
+
+            attrs["last_frame_at"] = (
+                datetime.fromtimestamp(self._last_frame_at, timezone.utc).isoformat()
+                if self._last_frame_at
+                else None
+            )
+        return attrs
 
     async def stream_source(self) -> Optional[str]:
         if self._stream_mode == "mjpeg":
@@ -2073,11 +2153,21 @@ class Hp7LiveCamera(Camera):
             return None
         from .mjpeg import serve_mjpeg
 
-        return await serve_mjpeg(
-            request,
-            ffmpeg_path=self._ffmpeg_path,
-            upstream_url=self._relay.stream_url,
-        )
+        if self._last_frame_path is None:
+            return await serve_mjpeg(
+                request,
+                ffmpeg_path=self._ffmpeg_path,
+                upstream_url=self._relay.stream_url,
+            )
+        try:
+            return await serve_mjpeg(
+                request,
+                ffmpeg_path=self._ffmpeg_path,
+                upstream_url=self._relay.stream_url,
+                on_frame=self._capture_frame,
+            )
+        finally:
+            await self._store_session_frame()
 
     async def async_camera_image(
         self,
@@ -2092,7 +2182,14 @@ class Hp7LiveCamera(Camera):
         TCP relay (`-frames:v 1 -f image2`) to grab a single JPEG. The
         active VTM session served by the relay is reused, so we don't open
         a second cloud session just for a thumbnail.
+
+        Battery peepholes never do that: a dashboard tile asks for a still
+        every few seconds, and each grab would wake the device. They return
+        the last frame of the most recent live view instead (None until the
+        first view).
         """
+        if self._last_frame_path is not None:
+            return self._last_frame
         if self._relay.port == 0:
             return None
         url = self._relay.stream_url
@@ -2166,6 +2263,12 @@ async def async_setup_live_entities(
         encryption_key=str(data.get("encryption_key") or ""),
         hass=hass,
     )
+    cateye = bool(data.get("cateye"))
+    if cateye:
+        from .const import CATEYE_IDLE_TIMEOUT
+
+        # Close the cloud session as soon as the last viewer leaves.
+        relay.idle_timeout = CATEYE_IDLE_TIMEOUT
     await relay.start()
     data["live_relay"] = relay
     # Let the coordinator see the relay so it can back polling off while
@@ -2197,8 +2300,21 @@ async def async_setup_live_entities(
         except Exception:  # noqa: BLE001
             pass
 
+    last_frame_path = (
+        hass.config.path(".storage", DOMAIN, f"{serial}_last_frame.jpg")
+        if cateye
+        else None
+    )
     async_add_entities(
-        [Hp7LiveCamera(serial, model, relay, stream_mode=effective_mode)]
+        [
+            Hp7LiveCamera(
+                serial,
+                model,
+                relay,
+                stream_mode=effective_mode,
+                last_frame_path=last_frame_path,
+            )
+        ]
     )
 
 

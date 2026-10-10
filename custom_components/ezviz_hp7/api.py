@@ -81,6 +81,76 @@ def _release_shared_session(key: tuple[str, str, str]) -> bool:
         return False
 
 
+# ── Peephole viewers (deviceCategory "CatEye", e.g. CP2) ─────────────────
+
+
+def _dig(obj: Any, *path: str, default: Any = None) -> Any:
+    for key in path:
+        if isinstance(obj, str) and obj[:1] in "{[":
+            try:
+                obj = json.loads(obj)
+            except ValueError:
+                return default
+        if not isinstance(obj, dict) or key not in obj:
+            return default
+        obj = obj[key]
+    return obj
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_cateye_status(info: dict[str, Any]) -> dict[str, Any]:
+    """Extract what a peephole viewer actually backs from a pagelist record.
+
+    The cloud sends the same catch-all payload to every model, so a CP2's
+    record also carries door-lock, chime, pet and face-recognition blocks
+    and switch states for hardware it doesn't have. Only these fields are
+    read; everything else is ignored on purpose.
+    """
+    info = info or {}
+    device = info.get("deviceInfos") or {}
+    status = info.get("STATUS") or {}
+    optionals = status.get("optionals") or {}
+    if isinstance(optionals, str):
+        try:
+            optionals = json.loads(optionals)
+        except ValueError:
+            optionals = {}
+    connection = info.get("CONNECTION") or {}
+    wifi = info.get("WIFI") or {}
+    video = _dig(info, "FEATURE_INFO", "1", "Video", default={}) or {}
+
+    battery = _as_int(optionals.get("powerRemaining"))
+    if battery is None:
+        details = _dig(video, "PowerMgr", "BatteryDetails", default=[]) or []
+        if details and isinstance(details[0], dict):
+            battery = _as_int(details[0].get("remain"))
+
+    upgrade = _dig(info, "UPGRADE", "isNeedUpgrade")
+    if upgrade is None:
+        upgrade = status.get("upgradeAvailable")
+
+    return {
+        "name": device.get("name"),
+        "version": device.get("version"),
+        "online": _as_int(device.get("status")) == 1,
+        "battery": battery,
+        "battery_status": _dig(video, "BatteryMgr", "BatteryStatus", "batteryStatus"),
+        "signal": _as_int(wifi.get("signal")),
+        "local_ip": connection.get("localIp") or wifi.get("address"),
+        "wan_ip": connection.get("wanIp") or optionals.get("wanIp") or connection.get("netIp"),
+        "encrypted": bool(_as_int(status.get("isEncrypt"))),
+        "upgrade_available": bool(_as_int(upgrade)),
+        "last_offline": device.get("offlineTime") or None,
+        "offline_notify": bool(_as_int(device.get("offlineNotify"))),
+    }
+
+
 class Hp7Api:
     """EZVIZ HP7 API client for cloud and local operations."""
 
@@ -1313,6 +1383,24 @@ class Hp7Api:
             if coerced is not None:
                 out["defence_on"] = coerced
         return out
+
+    def get_cateye_status(self, serial: str) -> dict[str, Any]:
+        """Status of a peephole viewer: one cloud pagelist read, nothing else.
+
+        The pagelist is the cloud's copy of what the device reported on its
+        last wake, so reading it never wakes a battery device. None of the
+        doorbell endpoints (chime config, IoT features, alarm detail, key
+        list) are called: several of them are relayed to the device itself.
+        """
+        self.ensure_client()
+        if not self._client:
+            return {}
+        try:
+            info = self._client.get_device_infos(serial) or {}
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("EZVIZ HP7: CatEye status fetch failed for %s: %s", serial, exc)
+            return {}
+        return parse_cateye_status(info)
 
     def get_status(
         self,
