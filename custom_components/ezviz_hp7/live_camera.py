@@ -2314,6 +2314,14 @@ class Hp7LiveCamera(Camera):
                 "+nobuffer",
                 "-flags",
                 "low_delay",
+                # The relay starts every client on the cached keyframe with
+                # its parameter sets; with ffmpeg's default 5 s analysis a
+                # grab took ~8 s (measured ~7.9 s vs ~4 s with these limits
+                # against relay output at real-time pace).
+                "-analyzeduration",
+                "1000000",
+                "-probesize",
+                "1000000",
                 "-i",
                 url,
                 "-frames:v",
