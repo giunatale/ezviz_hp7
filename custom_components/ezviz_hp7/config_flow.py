@@ -95,6 +95,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._cached_creds: dict[str, Any] | None = None
         self._device_options: dict[str, str] | None = None
         self._serial_to_unique: dict[str, str] | None = None
+        self._serial_to_model: dict[str, str] = {}
         self._pending_api: Hp7Api | None = None  # set during 2FA flow
 
     async def async_step_user(
@@ -164,6 +165,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         options: dict[str, str] = {}
         serial_to_unique: dict[str, str] = {}
+        serial_to_model: dict[str, str] = {}
+        configured = self._async_current_ids()
+
+        from .device_info import is_cateye
 
         for serial_key, info in (devices or {}).items():
             name = (info.get("name") or info.get("device_name") or "Device").strip()
@@ -174,7 +179,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 or info.get("full_serial")
                 or None
             )
-            if _looks_like_long_serial(serial_key):
+            if _looks_like_long_serial(serial_key) or is_cateye(info.get("category")):
+                # Intercoms are addressed by their composite MONITOR-CAMERA
+                # serial (their bare part serials are hidden on purpose);
+                # peephole viewers are a single device with a plain serial.
                 shown_serial = serial_key
             else:
                 shown_serial = (
@@ -185,14 +193,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             unique_id = api_unique or shown_serial
             if shown_serial in options or unique_id in serial_to_unique.values():
                 continue
-            options[shown_serial] = f"{name} ({shown_serial})"
+            if unique_id in configured or shown_serial in configured:
+                continue  # already set up: don't offer it again
+            model = info.get("model")
+            options[shown_serial] = f"{name} - {model} ({shown_serial})" if model else f"{name} ({shown_serial})"
             serial_to_unique[shown_serial] = unique_id
+            if model:
+                serial_to_model[shown_serial] = model
 
         self._cached_creds = user_input
 
         if options:
             self._device_options = options
             self._serial_to_unique = serial_to_unique
+            self._serial_to_model = serial_to_model
             return await self.async_step_pick_serial()
         return await self.async_step_enter_serial()
 
@@ -280,7 +294,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
 
         data = {**(self._cached_creds or {}), CONF_SERIAL: serial}
-        title = f"EZVIZ HP7 ({serial})"
+        title = f"EZVIZ {self._serial_to_model.get(serial) or 'HP7'} ({serial})"
         return self.async_create_entry(title=title, data=data)
 
     async def async_step_enter_serial(

@@ -12,7 +12,7 @@
       },
       "pick_serial": {
         "title": "Select Device",
-        "description": "Choose the serial number of your HP7 / CP7.",
+        "description": "Choose the EZVIZ device to add (HP7 / CP7 / HP5 intercoms, CP2 peephole).",
         "data": {
           "serial": "Serial Number"
         }
