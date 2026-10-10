@@ -90,6 +90,8 @@ SENSORS: list[tuple[str, str, SensorDeviceClass | None, str | None, str | None, 
 CATEYE_SENSORS: list[tuple[str, str | None, SensorDeviceClass | None, str | None, str | None, Any]] = [
     ("battery", None, SensorDeviceClass.BATTERY, "%", None, None),
     ("battery_status", "battery_status", None, None, "mdi:battery-heart-variant", None),
+    ("name", "name", None, None, "mdi:label", None),
+    ("privacy_areas", "privacy_areas", None, None, "mdi:eye-off-outline", None),
     ("last_offline", "last_offline", SensorDeviceClass.TIMESTAMP, None, "mdi:wifi-off", None),
     ("version", "version", None, None, "mdi:update", None),
     ("signal", "signal", None, "%", "mdi:wifi", None),
@@ -97,7 +99,7 @@ CATEYE_SENSORS: list[tuple[str, str | None, SensorDeviceClass | None, str | None
     ("wan_ip", "wan_ip", None, None, "mdi:wan", None),
 ]
 CATEYE_DIAGNOSTIC_KEYS = {
-    "version", "signal", "local_ip", "wan_ip",
+    "name", "version", "signal", "local_ip", "wan_ip",
 }
 
 

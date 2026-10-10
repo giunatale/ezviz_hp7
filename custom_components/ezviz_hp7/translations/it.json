@@ -99,6 +99,9 @@
       },
       "last_offline": {
         "name": "Ultima disconnessione"
+      },
+      "privacy_areas": {
+        "name": "Aree maschera privacy"
       }
     },
     "binary_sensor": {
@@ -183,6 +186,18 @@
       },
       "chime_pir_monitor": {
         "name": "Allerta Movimento Monitor"
+      },
+      "offline_notify": {
+        "name": "Notifica offline"
+      },
+      "logo_watermark": {
+        "name": "Filigrana logo"
+      },
+      "peak_protection": {
+        "name": "Protezione picco intelligente"
+      },
+      "distortion_correction": {
+        "name": "Correzione distorsione"
       }
     },
     "camera": {
@@ -211,6 +226,33 @@
       },
       "chime_pir_ringtone_monitor": {
         "name": "Suoneria Movimento Monitor"
+      },
+      "screen_brightness": {
+        "name": "Luminosità schermo"
+      }
+    },
+    "select": {
+      "screen_timeout": {
+        "name": "Blocco automatico schermo",
+        "state": {
+          "10": "10 s",
+          "15": "15 s",
+          "20": "20 s",
+          "25": "25 s",
+          "30": "30 s"
+        }
+      },
+      "wifi_sleep_mode": {
+        "name": "Modalità sospensione Wi-Fi",
+        "state": {
+          "low_power": "Basso consumo",
+          "ultra_low_power": "Consumo ultra ridotto"
+        }
+      }
+    },
+    "text": {
+      "osd_text": {
+        "name": "Testo OSD"
       }
     }
   },

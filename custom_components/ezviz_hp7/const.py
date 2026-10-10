@@ -98,7 +98,7 @@ CONF_DIAGNOSTIC_DUMPS = "diagnostic_dumps"
 CONF_ENCRYPTION_KEY = "encryption_key"
 
 # Platforms to set up
-PLATFORMS = ["button", "sensor", "binary_sensor", "camera", "switch", "number"]
+PLATFORMS = ["button", "sensor", "binary_sensor", "camera", "switch", "number", "select", "text"]
 
 # Poll interval in seconds. 2 s was aggressive enough to trigger HTTP 500 from
 # the EZVIZ pagelist endpoint under load (see issue #25); 15 s matches Pedro's
@@ -116,3 +116,19 @@ CATEYE_UPDATE_INTERVAL_SEC = 300
 # the session and ffmpeg attaching to the relay, so the session isn't torn
 # down and reopened (which would wake the device twice).
 CATEYE_IDLE_TIMEOUT = 5.0
+
+# Settings writes to a peephole: the first command often reaches the device
+# asleep and fails (2009 "device network error") or is silently dropped, as in
+# the EZVIZ app ("command failed", then a retry succeeds). Writes are retried
+# with backoff on those errors, then confirmed by re-reading the cloud, with
+# one re-send if nothing moved. If the value still isn't confirmed the entity
+# falls back to what the cloud reports and the action raises an error.
+CATEYE_WRITE_BACKOFF = (2, 4, 8)
+CATEYE_CONFIRM_POLL = 3
+CATEYE_CONFIRM_TIMEOUT = 45
+CATEYE_RESEND_AFTER = 15
+CATEYE_TRANSIENT_CODES = (2009, 2004)
+# Screen auto-lock time choices offered by the EZVIZ app (seconds).
+CATEYE_SCREEN_TIMEOUTS = [10, 15, 20, 25, 30]
+# Wi-Fi sleep mode values (optionals.device_wifi_mode).
+CATEYE_WIFI_MODES = {"low_power": 1, "ultra_low_power": 0}

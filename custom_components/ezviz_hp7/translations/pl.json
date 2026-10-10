@@ -99,6 +99,9 @@
       },
       "last_offline": {
         "name": "Last offline"
+      },
+      "privacy_areas": {
+        "name": "Privacy mask areas"
       }
     },
     "binary_sensor": {
@@ -183,6 +186,18 @@
       },
       "chime_pir_monitor": {
         "name": "Alert dźwiękowy ruchu monitora"
+      },
+      "offline_notify": {
+        "name": "Offline notification"
+      },
+      "logo_watermark": {
+        "name": "Logo watermark"
+      },
+      "peak_protection": {
+        "name": "Intelligent peak protection"
+      },
+      "distortion_correction": {
+        "name": "Distortion correction"
       }
     },
     "camera": {
@@ -211,6 +226,33 @@
       },
       "chime_pir_ringtone_monitor": {
         "name": "Melodia ruchu monitora"
+      },
+      "screen_brightness": {
+        "name": "Screen brightness"
+      }
+    },
+    "select": {
+      "screen_timeout": {
+        "name": "Screen auto-lock",
+        "state": {
+          "10": "10 s",
+          "15": "15 s",
+          "20": "20 s",
+          "25": "25 s",
+          "30": "30 s"
+        }
+      },
+      "wifi_sleep_mode": {
+        "name": "Wi-Fi sleep mode",
+        "state": {
+          "low_power": "Low power",
+          "ultra_low_power": "Ultra low power"
+        }
+      }
+    },
+    "text": {
+      "osd_text": {
+        "name": "OSD text"
       }
     }
   },
