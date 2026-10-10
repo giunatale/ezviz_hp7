@@ -148,6 +148,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
 
+    api: Hp7Api | None = None
     try:
         api = Hp7Api(username, password, region, token=token)
         await hass.async_add_executor_job(api.login)
@@ -161,6 +162,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # integration look broken when the real fault was elsewhere (#49:
         # HA core's own resolver was timing out).
         _LOGGER.debug("EZVIZ HP7 setup deferred: %s", exc)
+        if api is not None:
+            # Give back this entry's share of the account session.
+            await hass.async_add_executor_job(api.close)
         raise ConfigEntryNotReady(f"Cannot connect to EZVIZ HP7: {exc}") from exc
 
     # Detect device model (HP7 / CP7 / ...) from the cloud so DeviceInfo
@@ -178,6 +182,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_config_entry_first_refresh()
     except Exception as exc:
         _LOGGER.debug("EZVIZ HP7 first refresh deferred: %s", exc)
+        await hass.async_add_executor_job(api.close)
         raise ConfigEntryNotReady(f"Failed to fetch EZVIZ HP7 data: {exc}") from exc
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {

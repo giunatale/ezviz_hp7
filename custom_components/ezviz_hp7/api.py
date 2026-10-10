@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from typing import Any
 
@@ -32,6 +33,54 @@ REGION_URLS: dict[str, str] = {
 }
 
 
+# ── Shared cloud session ─────────────────────────────────────────────────
+#
+# Every config entry is one device, but they don't need one EZVIZ login each:
+# each login is a separate session on the account (EZVIZ caps an account at
+# ~10 terminals), and two entries re-logging in at the same time just churn
+# sessions. Entries of the same account therefore share one EzvizClient and
+# token. Keyed by (username, API host, password): a different password is a
+# different login on purpose, so a mistyped password in the config flow is
+# still rejected instead of riding on an existing session.
+_SHARED_SESSIONS: dict[tuple[str, str, str], dict[str, Any]] = {}
+_SHARED_SESSIONS_LOCK = threading.Lock()
+# A forced re-login by one entry is reused by the others for this long.
+_RELOGIN_DEDUP_SEC = 60.0
+
+
+def _acquire_shared_session(
+    key: tuple[str, str, str], token: dict[str, Any] | None
+) -> dict[str, Any]:
+    with _SHARED_SESSIONS_LOCK:
+        shared = _SHARED_SESSIONS.get(key)
+        if shared is None:
+            shared = {
+                "client": None,
+                "token": token,
+                "refs": 0,
+                "lock": threading.RLock(),
+                "relogin_at": 0.0,
+            }
+            _SHARED_SESSIONS[key] = shared
+        elif shared.get("token") is None and token:
+            shared["token"] = token
+        shared["refs"] += 1
+        return shared
+
+
+def _release_shared_session(key: tuple[str, str, str]) -> bool:
+    """Drop one reference; True when it was the last one."""
+    with _SHARED_SESSIONS_LOCK:
+        shared = _SHARED_SESSIONS.get(key)
+        if shared is None:
+            return True
+        shared["refs"] -= 1
+        if shared["refs"] <= 0:
+            _SHARED_SESSIONS.pop(key, None)
+            return True
+        return False
+
+
 class Hp7Api:
     """EZVIZ HP7 API client for cloud and local operations."""
 
@@ -53,9 +102,14 @@ class Hp7Api:
         self._username = username
         self._password = password
         self._region = region
-        self._token = token
-        self._client: EzvizClient | None = None
         self._url = REGION_URLS.get(region, REGION_URLS["eu"])
+        # _client / _token live in the account-wide shared session (see
+        # _SHARED_SESSIONS); the properties below read and write it.
+        self._session_key = (
+            (username or "").strip().lower(), self._url, password or ""
+        )
+        self._shared = _acquire_shared_session(self._session_key, token)
+        self._released = False
         self.supports_door = True
         self.supports_gate = True
         # LAN AES control-key cache: bare_serial -> (key_bytes, monotonic_ts).
@@ -95,6 +149,22 @@ class Hp7Api:
 
 
     @property
+    def _client(self) -> EzvizClient | None:
+        return self._shared["client"]
+
+    @_client.setter
+    def _client(self, value: EzvizClient | None) -> None:
+        self._shared["client"] = value
+
+    @property
+    def _token(self) -> dict[str, Any] | None:
+        return self._shared["token"]
+
+    @_token.setter
+    def _token(self, value: dict[str, Any] | None) -> None:
+        self._shared["token"] = value
+
+    @property
     def token(self) -> dict[str, Any] | None:
         """Get the current authentication token.
 
@@ -114,19 +184,23 @@ class Hp7Api:
         if self._client:
             return
 
-        try:
-            self._client = EzvizClient(
-                account=self._username,
-                password=self._password,
-                url=self._url,
-                token=self._token,
-            )
+        with self._shared["lock"]:
+            if self._client:
+                return  # another entry of this account created it meanwhile
+            try:
+                self._client = EzvizClient(
+                    account=self._username,
+                    password=self._password,
+                    url=self._url,
+                    token=self._token,
+                )
 
-            if not self._token:
-                self._login_and_store_token()
-        except Exception as exc:
-            _LOGGER.error("Failed to initialize EzvizClient: %s", exc)
-            raise RuntimeError(f"Failed to initialize EZVIZ client: {exc}") from exc
+                if not self._token:
+                    self._login_and_store_token()
+            except Exception as exc:
+                self._client = None
+                _LOGGER.error("Failed to initialize EzvizClient: %s", exc)
+                raise RuntimeError(f"Failed to initialize EZVIZ client: {exc}") from exc
 
     def _login_and_store_token(self, sms_code: int | None = None) -> None:
         """Authenticate with EZVIZ server and store token.
@@ -155,14 +229,22 @@ class Hp7Api:
         after a sustained cloud-failure streak to self-heal a dead token.
         Returns True if re-login succeeded.
         """
-        self._client = None
-        self._token = None
-        try:
-            self.ensure_client()
-            return self._client is not None
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("EZVIZ HP7: forced re-login failed: %s", exc)
-            return False
+        with self._shared["lock"]:
+            if (
+                self._client is not None
+                and time.monotonic() - self._shared["relogin_at"] < _RELOGIN_DEDUP_SEC
+            ):
+                # Another entry of this account just re-logged in.
+                return True
+            self._client = None
+            self._token = None
+            try:
+                self.ensure_client()
+                self._shared["relogin_at"] = time.monotonic()
+                return self._client is not None
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("EZVIZ HP7: forced re-login failed: %s", exc)
+                return False
 
     def login(self, sms_code: int | None = None) -> bool:
         """Authenticate with EZVIZ server.
@@ -236,14 +318,24 @@ class Hp7Api:
         return result
 
     def close(self) -> None:
-        """Close API connection and cleanup resources."""
-        if self._client:
+        """Release this entry's share of the account session.
+
+        The cloud session is logged out only when the last entry of the
+        account is unloaded; otherwise it stays up for the others.
+        """
+        if self._released:
+            return
+        self._released = True
+        client = self._client
+        if not _release_shared_session(self._session_key):
+            return
+        if client:
             try:
-                self._client.logout()
+                client.logout()
             except Exception as exc:
                 _LOGGER.debug("Error during logout: %s", exc)
             finally:
-                self._client = None
+                self._shared["client"] = None
 
     # ── LAN (CPD7) streaming credentials ────────────────────────────────
     #
