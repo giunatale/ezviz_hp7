@@ -135,6 +135,25 @@ def parse_cateye_status(info: dict[str, Any]) -> dict[str, Any]:
     if upgrade is None:
         upgrade = status.get("upgradeAvailable")
 
+    switches = {
+        _as_int(s.get("type")): bool(s.get("enable"))
+        for s in (info.get("SWITCH") or [])
+        if isinstance(s, dict)
+    }
+    battery_detail = (_dig(video, "PowerMgr", "BatteryDetails", default=[]) or [{}])[0]
+    if not isinstance(battery_detail, dict):
+        battery_detail = {}
+    osd = optionals.get("OSD")
+    if isinstance(osd, dict):
+        osd = [osd]
+    osd_text = osd[0].get("name") if isinstance(osd, list) and osd and isinstance(osd[0], dict) else None
+    cover = optionals.get("pri_cover_area") or {}
+    if isinstance(cover, str):
+        try:
+            cover = json.loads(cover)
+        except ValueError:
+            cover = {}
+
     return {
         "name": device.get("name"),
         "version": device.get("version"),
@@ -148,7 +167,27 @@ def parse_cateye_status(info: dict[str, Any]) -> dict[str, Any]:
         "upgrade_available": bool(_as_int(upgrade)),
         "last_offline": device.get("offlineTime") or None,
         "offline_notify": bool(_as_int(device.get("offlineNotify"))),
+        # Charging: BatteryDetails status 0 -> 1 when the panel is plugged in
+        # (type, the power source, goes 1 battery -> 0 external at the same time).
+        "charging": _as_int(battery_detail.get("status")) == 1 if battery_detail else None,
+        "privacy_areas": _as_int(cover.get("cover_num")) if isinstance(cover, dict) else None,
+        # Settings, each confirmed against the EZVIZ app on a CP2 (fw V5.4.0).
+        "logo_watermark": switches.get(702),
+        "peak_protection": switches.get(800),
+        "distortion_correction": switches.get(617),
+        "osd_text": osd_text,
+        "screen_brightness": _as_int(optionals.get("device_screen_lightness")),
+        "screen_timeout": _as_int(optionals.get("device_screen_overtime")),
+        "wifi_sleep_mode": _as_int(optionals.get("device_wifi_mode")),
     }
+
+
+def _same_setting(reported: Any, wanted: Any) -> bool:
+    if isinstance(wanted, bool) or isinstance(reported, bool):
+        return bool(reported) == bool(wanted)
+    if isinstance(wanted, int) or isinstance(reported, int):
+        return _as_int(reported) == _as_int(wanted)
+    return (reported or "") == (wanted or "")
 
 
 class Hp7Api:
@@ -1387,6 +1426,84 @@ class Hp7Api:
             _LOGGER.debug("EZVIZ HP7: CatEye status fetch failed for %s: %s", serial, exc)
             return {}
         return parse_cateye_status(info)
+
+    def _cateye_send(self, serial: str, key: str, value: Any) -> None:
+        """One write of a peephole setting, through the path that the CP2
+        actually takes (found by write-testing each candidate path)."""
+        client = self._client
+        if key == "offline_notify":
+            client.set_offline_notification(serial, int(bool(value)))
+        elif key in ("logo_watermark", "peak_protection", "distortion_correction"):
+            stype = {"logo_watermark": 702, "peak_protection": 800, "distortion_correction": 617}[key]
+            client.switch_status(serial, stype, int(bool(value)), channel_no=0)
+        elif key == "osd_text":
+            if value:
+                client.set_camera_osd(serial, text=str(value), channel=1)
+            else:
+                client.set_camera_osd(serial, enabled=False, channel=1)
+        elif key == "screen_brightness":
+            client.set_dev_config_kv(serial, 1, "device_screen_lightness", int(value))
+        elif key == "screen_timeout":
+            client.set_dev_config_kv(serial, 1, "device_screen_overtime", int(value))
+        elif key == "wifi_sleep_mode":
+            # Channel 0 for this one: channel 1 is accepted and ignored.
+            client.set_dev_config_kv(serial, 0, "device_wifi_mode", int(value))
+        else:
+            raise ValueError(f"unknown CatEye setting {key}")
+
+    def _cateye_send_with_backoff(self, serial: str, key: str, value: Any) -> None:
+        from .const import CATEYE_TRANSIENT_CODES, CATEYE_WRITE_BACKOFF
+
+        delays = list(CATEYE_WRITE_BACKOFF)
+        while True:
+            try:
+                self._cateye_send(serial, key, value)
+                return
+            except Exception as exc:  # noqa: BLE001
+                transient = any(f"'code': {c}" in str(exc) for c in CATEYE_TRANSIENT_CODES)
+                if not transient or not delays:
+                    raise
+                delay = delays.pop(0)
+                _LOGGER.debug(
+                    "EZVIZ HP7: %s not answering for %s (%s), retry in %ss",
+                    serial, key, exc, delay,
+                )
+                time.sleep(delay)
+
+    def cateye_write(self, serial: str, key: str, value: Any) -> tuple[bool, dict[str, Any]]:
+        """Write a peephole setting and wait until the cloud reports it.
+
+        Returns (confirmed, latest status). Blocking: run in an executor.
+        Retries with backoff while the device wakes up, re-sends once if the
+        value hasn't moved after CATEYE_RESEND_AFTER s, and gives up after
+        CATEYE_CONFIRM_TIMEOUT s, returning the status the cloud reports so
+        the entity can fall back to it.
+        """
+        from .const import CATEYE_CONFIRM_POLL, CATEYE_CONFIRM_TIMEOUT, CATEYE_RESEND_AFTER
+
+        self.ensure_client()
+        if not self._client:
+            return False, {}
+        status: dict[str, Any] = {}
+        try:
+            self._cateye_send_with_backoff(serial, key, value)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("EZVIZ HP7: %s rejected %s=%r: %s", serial, key, value, exc)
+            return False, self.get_cateye_status(serial)
+        started = time.monotonic()
+        resent = False
+        while time.monotonic() - started < CATEYE_CONFIRM_TIMEOUT:
+            time.sleep(CATEYE_CONFIRM_POLL)
+            status = self.get_cateye_status(serial) or status
+            if _same_setting(status.get(key), value):
+                return True, status
+            if not resent and time.monotonic() - started >= CATEYE_RESEND_AFTER:
+                resent = True
+                try:
+                    self._cateye_send_with_backoff(serial, key, value)
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug("EZVIZ HP7: re-send of %s failed: %s", key, exc)
+        return False, status
 
     def get_status(
         self,

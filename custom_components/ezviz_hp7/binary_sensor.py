@@ -236,6 +236,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         # lock.
         for key, translation_key, device_class, diagnostic in (
             ("online", None, BinarySensorDeviceClass.CONNECTIVITY, False),
+            ("charging", None, BinarySensorDeviceClass.BATTERY_CHARGING, False),
             ("encrypted", "encryption", None, False),
             ("upgrade_available", None, BinarySensorDeviceClass.UPDATE, True),
         ):
