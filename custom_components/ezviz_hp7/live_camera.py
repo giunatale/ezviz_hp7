@@ -718,6 +718,10 @@ class Hp7StreamRelay:
         # Seconds the shared cloud session survives its last client. Battery
         # peepholes override this with CATEYE_IDLE_TIMEOUT.
         self.idle_timeout: float = PREWARM_IDLE_TIMEOUT
+        # Peephole viewers (CatEye) stream video only: no audio input for
+        # ffmpeg (waiting on one that never delivers stalls it with no
+        # output), and no HEVC->H.264 transcode when MJPEG decodes anyway.
+        self.peephole: bool = False
 
     @property
     def port(self) -> int:
@@ -1238,8 +1242,11 @@ class Hp7StreamRelay:
         VTM is used as fallback.
         """
         def _open_cloud():
+            # The stream quality option used to apply to the LAN path only;
+            # the cloud URL carries the same choice (stream=1 main, 2 sub).
             return open_cloud_stream(
-                ezviz_client, self._serial, channel=self._channel
+                ezviz_client, self._serial, channel=self._channel,
+                stream_type=2 if self._stream_quality == "sub" else 1,
             )
 
         def _open_lan():
@@ -1792,9 +1799,10 @@ class Hp7StreamRelay:
                 ]
             else:
                 v_port = _free_local_port()
-                a_port = _free_local_port()
                 v_listener = _start_local_listener(v_port)
-                a_listener = _start_local_listener(a_port)
+                if not self.peephole:
+                    a_port = _free_local_port()
+                    a_listener = _start_local_listener(a_port)
 
                 # Resolve the input codec + whether to transcode.
                 #   h264       -> input h264, copy
@@ -1809,6 +1817,8 @@ class Hp7StreamRelay:
                     cfg = "h264"
                 in_is_hevc = cfg in ("hevc", "hevc_copy")
                 transcode = cfg == "hevc"
+                if self.peephole and self._stream_mode != "webrtc":
+                    transcode = False  # the MJPEG ffmpeg decodes HEVC itself
                 in_fmt = "hevc" if in_is_hevc else "h264"
 
                 cmd = [
@@ -1819,12 +1829,17 @@ class Hp7StreamRelay:
                     *wallclock,
                     "-f", in_fmt, "-r", "15",
                     "-i", f"tcp://127.0.0.1:{v_port}",
-                    "-analyzeduration", "200000", "-probesize", "200000",
-                    *wallclock,
-                    "-f", "aac",
-                    "-i", f"tcp://127.0.0.1:{a_port}",
-                    "-map", "0:v:0", "-map", "1:a:0",
                 ]
+                if self.peephole:
+                    cmd += ["-map", "0:v:0"]
+                else:
+                    cmd += [
+                        "-analyzeduration", "200000", "-probesize", "200000",
+                        *wallclock,
+                        "-f", "aac",
+                        "-i", f"tcp://127.0.0.1:{a_port}",
+                        "-map", "0:v:0", "-map", "1:a:0",
+                    ]
                 if transcode:
                     # HEVC->H.264: HA's go2rtc/WebRTC path can't hand H.265 to
                     # most browsers, so a copy leaves a grey screen (#36, #37).
@@ -1837,12 +1852,13 @@ class Hp7StreamRelay:
                     ]
                 else:
                     cmd += ["-c:v", "copy"]
-                cmd += [
-                    # Re-encode audio so the mpegts muxer gets a proper AAC
-                    # AudioSpecificConfig extradata (inbound ADTS strips it).
-                    "-c:a", "aac", "-ar", "16000", "-ac", "1", "-b:a", "32k",
-                    "-max_interleave_delta", "0",
-                ]
+                if not self.peephole:
+                    cmd += [
+                        # Re-encode audio so the mpegts muxer gets a proper AAC
+                        # AudioSpecificConfig extradata (inbound ADTS strips it).
+                        "-c:a", "aac", "-ar", "16000", "-ac", "1", "-b:a", "32k",
+                    ]
+                cmd += ["-max_interleave_delta", "0"]
                 # Opt-in: re-prepend SPS/PPS in front of every IDR for
                 # firmwares that only emit them at the first IDR (#33).
                 # Skipped on transcode (libx264 already inlines them).
@@ -1900,13 +1916,14 @@ class Hp7StreamRelay:
                     name=f"hp7-vtm-vsend-{self._serial}",
                     daemon=True,
                 )
-                a_sender_t = threading.Thread(
-                    target=_sender_thread,
-                    args=(a_listener, a_q, stop_event, "audio", _mk_drain(self._q_last_drain, a_q)),
-                    name=f"hp7-vtm-asend-{self._serial}",
-                    daemon=True,
-                )
-                threads = [v_sender_t, a_sender_t]
+                threads = [v_sender_t]
+                if a_listener is not None:
+                    threads.append(threading.Thread(
+                        target=_sender_thread,
+                        args=(a_listener, a_q, stop_event, "audio", _mk_drain(self._q_last_drain, a_q)),
+                        name=f"hp7-vtm-asend-{self._serial}",
+                        daemon=True,
+                    ))
             for t in threads:
                 t.start()
 
@@ -2269,6 +2286,7 @@ async def async_setup_live_entities(
 
         # Close the cloud session as soon as the last viewer leaves.
         relay.idle_timeout = CATEYE_IDLE_TIMEOUT
+        relay.peephole = True
     await relay.start()
     data["live_relay"] = relay
     # Let the coordinator see the relay so it can back polling off while
