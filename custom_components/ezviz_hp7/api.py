@@ -423,7 +423,11 @@ class Hp7Api:
         for serial, data in devices.items():
             device_info = data.get("deviceInfos", {})
             name = device_info.get("name") or device_info.get("deviceName") or "Device"
-            result[serial] = {"device_name": name}
+            result[serial] = {
+                "device_name": name,
+                "category": device_info.get("deviceCategory"),
+                "model": device_info.get("deviceSubCategory"),
+            }
         return result
 
     def close(self) -> None:

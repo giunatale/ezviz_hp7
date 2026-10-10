@@ -12,7 +12,7 @@
       },
       "pick_serial": {
         "title": "Seleziona dispositivo",
-        "description": "Scegli il serial del tuo HP7 / CP7.",
+        "description": "Scegli il dispositivo EZVIZ da aggiungere (citofoni HP7 / CP7 / HP5, spioncino CP2).",
         "data": {
           "serial": "Numero di serie"
         }
