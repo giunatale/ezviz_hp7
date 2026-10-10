@@ -105,3 +105,14 @@ PLATFORMS = ["button", "sensor", "binary_sensor", "camera", "switch", "number"]
 # go2rtc fork and albrzmr's fork and is well within the rate-limit envelope
 # while still surfacing doorbell rings / motion within one cycle.
 UPDATE_INTERVAL_SEC = 15
+
+# Peephole viewers (EZVIZ deviceCategory "CatEye", e.g. CP2) are battery
+# cameras that report to the cloud on their own wake schedule. Their status is
+# read from the cloud pagelist only (never from the device), and it changes
+# slowly, so a long interval is plenty.
+CATEYE_UPDATE_INTERVAL_SEC = 300
+# How long the cloud stream stays open after the last viewer leaves. Not a
+# keep-alive: just enough to cover the gap between the MJPEG handler opening
+# the session and ffmpeg attaching to the relay, so the session isn't torn
+# down and reopened (which would wake the device twice).
+CATEYE_IDLE_TIMEOUT = 5.0

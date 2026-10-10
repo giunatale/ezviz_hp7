@@ -93,6 +93,12 @@
       },
       "mic_volume": {
         "name": "Volume Microfono"
+      },
+      "battery_status": {
+        "name": "Stato batteria"
+      },
+      "last_offline": {
+        "name": "Ultima disconnessione"
       }
     },
     "binary_sensor": {
@@ -140,6 +146,9 @@
       },
       "feature_human_detection": {
         "name": "Rilevamento Persone"
+      },
+      "encryption": {
+        "name": "Crittografia video"
       }
     },
     "button": {
