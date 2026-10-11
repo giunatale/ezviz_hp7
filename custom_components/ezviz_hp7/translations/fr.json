@@ -206,6 +206,9 @@
       },
       "live": {
         "name": "Direct"
+      },
+      "live_sub": {
+        "name": "En direct (sub-stream)"
       }
     },
     "number": {
@@ -293,7 +296,9 @@
           "stream_mode": "Mode de diffusion (auto = par défaut : détecte le codec et choisit tout seul — H.264 → webrtc, HEVC → mjpeg ; webrtc = HA Stream/go2rtc, avec audio + faible latence mais n'affiche pas le HEVC sans transcodage ; mjpeg = ffmpeg par spectateur en motion-JPEG, agnostique au codec et robuste pour HEVC/multi-spectateur mais sans audio)",
           "stream_quality": "Qualité du flux (main = pleine résolution ; sub = flux secondaire basse résolution de l'appareil, bien moins coûteux à décoder — à utiliser si la vidéo accumule du retard sur un hôte peu puissant comme un Raspberry Pi. S'applique à la source locale et au cloud)",
           "encryption_key": "Clé de chiffrement (le code de vérification à 6 caractères de l'appareil, sur son étiquette). Nécessaire uniquement si le portier chiffre la vidéo et que le cloud ne fournit pas la clé : elle sert alors à déchiffrer le flux, pour avoir le direct sans désactiver le chiffrement.",
-          "diagnostic_dumps": "Vidages de diagnostic (écrit deux fichiers .bin dans /config capturant le début du flux, pour analyse lors d'un signalement de problème vidéo. Laissez sur OFF : inutile en usage normal)"
+          "diagnostic_dumps": "Vidages de diagnostic (écrit deux fichiers .bin dans /config capturant le début du flux, pour analyse lors d'un signalement de problème vidéo. Laissez sur OFF : inutile en usage normal)",
+          "sub_stream_camera": "Créer aussi une caméra sub-stream (une seconde caméra en direct qui utilise toujours le flux secondaire basse résolution de l'appareil, p. ex. pour le casting ou Google Home ; la caméra principale garde la qualité ci-dessus)",
+          "sub_stream_mode": "Diffusion de la caméra sub-stream (same = comme la caméra principale ; ou webrtc / mjpeg pour cette caméra uniquement)"
         }
       }
     }

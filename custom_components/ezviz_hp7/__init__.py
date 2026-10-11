@@ -30,6 +30,10 @@ from .const import (
     CONF_DIAGNOSTIC_DUMPS,
     CONF_ENCRYPTION_KEY,
     CONF_STREAM_QUALITY,
+    CONF_SUB_CAMERA,
+    CONF_SUB_STREAM_MODE,
+    SUB_STREAM_MODE_SAME,
+    SUB_STREAM_MODES,
     STREAM_QUALITY_MAIN,
     STREAM_QUALITIES,
 )
@@ -136,6 +140,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ).lower()
     if stream_quality not in STREAM_QUALITIES:
         stream_quality = STREAM_QUALITY_MAIN
+    sub_camera = bool(
+        entry.options.get(CONF_SUB_CAMERA, entry.data.get(CONF_SUB_CAMERA, False))
+    )
+    sub_stream_mode = str(
+        entry.options.get(
+            CONF_SUB_STREAM_MODE,
+            entry.data.get(CONF_SUB_STREAM_MODE, SUB_STREAM_MODE_SAME),
+        )
+        or SUB_STREAM_MODE_SAME
+    ).lower()
+    if sub_stream_mode not in SUB_STREAM_MODES:
+        sub_stream_mode = SUB_STREAM_MODE_SAME
     encryption_key = str(
         entry.options.get(
             CONF_ENCRYPTION_KEY, entry.data.get(CONF_ENCRYPTION_KEY, "")
@@ -223,6 +239,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "stream_source": stream_source,
         "stream_mode": stream_mode,
         "stream_quality": stream_quality,
+        "sub_camera": sub_camera,
+        "sub_stream_mode": sub_stream_mode,
         "diagnostic_dumps": diagnostic_dumps,
         "encryption_key": encryption_key,
         "coordinator": coordinator,

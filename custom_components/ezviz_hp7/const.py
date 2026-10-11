@@ -82,6 +82,17 @@ CONF_STREAM_QUALITY = "stream_quality"
 STREAM_QUALITY_MAIN = "main"
 STREAM_QUALITY_SUB = "sub"
 STREAM_QUALITIES = [STREAM_QUALITY_MAIN, STREAM_QUALITY_SUB]
+# Opt-in second live camera that always uses the sub-stream, next to the
+# main one (which keeps following CONF_STREAM_QUALITY). Lets a user keep full
+# resolution in HA and use the light stream elsewhere (casting, Google Home),
+# disabling whichever entity they don't need.
+CONF_SUB_CAMERA = "sub_stream_camera"
+# Delivery of that sub-stream camera: "same" follows the main camera's
+# (resolved) mode; "webrtc"/"mjpeg" set it independently, e.g. MJPEG for the
+# main camera in HA and WebRTC for the sub one used by casting/Google.
+CONF_SUB_STREAM_MODE = "sub_stream_mode"
+SUB_STREAM_MODE_SAME = "same"
+SUB_STREAM_MODES = [SUB_STREAM_MODE_SAME, "webrtc", "mjpeg"]
 
 # Write raw stream captures to <config>/ezviz_hp7_{es,ps}_dump_<serial>.bin
 # for bitstream analysis when reporting a streaming bug. Off by default:
