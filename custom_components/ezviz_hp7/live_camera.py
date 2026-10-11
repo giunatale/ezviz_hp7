@@ -755,6 +755,10 @@ class Hp7StreamRelay:
         # ffmpeg (waiting on one that never delivers stalls it with no
         # output), and no HEVC->H.264 transcode when MJPEG decodes anyway.
         self.peephole: bool = False
+        # Peepholes in WebRTC mode: where the H.264 conversion writes the
+        # latest frame (every 2 s, atomically) so the camera's still keeps
+        # showing the last frame viewed. Set by the platform setup.
+        self.last_frame_path: Optional[str] = None
 
     @property
     def port(self) -> int:
@@ -1189,6 +1193,7 @@ class Hp7StreamRelay:
         if (
             codec == "hevc"
             and self._stream_mode == "webrtc"
+            and not self.peephole  # converted to H.264 by the relay itself
             and not self._warned_hevc_webrtc
         ):
             self._warned_hevc_webrtc = True
@@ -1812,6 +1817,9 @@ class Hp7StreamRelay:
                         self._video_codec == "auto"
                         and self._detected_codec == "hevc"
                     )
+                    # Peepholes stream HEVC; the first viewer can connect
+                    # before a chunk has been sniffed, so don't wait for it.
+                    or self.peephole
                 )
                 cmd = [
                     self._ffmpeg_path,
@@ -1872,6 +1880,11 @@ class Hp7StreamRelay:
                         "-preset", "ultrafast", "-tune", "zerolatency",
                         "-pix_fmt", "yuv420p",
                     ]
+                    if self.peephole:
+                        # A keyframe every second: HLS players (casting) can
+                        # only start on one, and x264's default interval is
+                        # 250 frames (~16 s at 15 fps).
+                        cmd += ["-force_key_frames", "expr:gte(t,n_forced*1)"]
                 else:
                     cmd += ["-c:v", "copy"]
                 if not self.peephole:
@@ -1883,6 +1896,23 @@ class Hp7StreamRelay:
                     "-sdt_period", "1",
                     "-f", "mpegts", "pipe:1",
                 ]
+                if self.peephole and lan_transcode and self.last_frame_path:
+                    # Second output of the same (already decoding) process:
+                    # the latest frame every 2 s, renamed into place so a
+                    # reader never sees a half-written file. "-y": the file
+                    # normally exists already, and without it ffmpeg asks to
+                    # overwrite, gets no answer (no tty) and exits before
+                    # producing any output at all.
+                    cmd.insert(1, "-y")
+                    cmd += [
+                        "-map", "0:v:0",
+                        "-vf", "fps=1/2",
+                        "-q:v", "5",
+                        "-f", "image2",
+                        "-update", "1",
+                        "-atomic_writing", "1",
+                        self.last_frame_path,
+                    ]
             else:
                 v_port = _free_local_port()
                 v_listener = _start_local_listener(v_port)
@@ -2118,6 +2148,17 @@ def _read_last_frame(path: str) -> tuple[bytes, float] | None:
         return None
 
 
+def _read_last_frame_if_newer(path: str, since: float) -> tuple[bytes, float] | None:
+    import os
+
+    try:
+        if os.path.getmtime(path) <= since:
+            return None
+    except OSError:
+        return None
+    return _read_last_frame(path)
+
+
 def _write_last_frame(path: str, data: bytes) -> None:
     import os
 
@@ -2299,6 +2340,16 @@ class Hp7LiveCamera(Camera):
         first view).
         """
         if self._last_frame_path is not None:
+            # In WebRTC mode the relay's conversion writes the file; in MJPEG
+            # mode this entity does. Pick up whichever is newer.
+            if self.hass is not None:
+                loaded = await self.hass.async_add_executor_job(
+                    _read_last_frame_if_newer,
+                    self._last_frame_path,
+                    self._last_frame_at or 0.0,
+                )
+                if loaded is not None:
+                    self._last_frame, self._last_frame_at = loaded
             return self._last_frame
         if self._relay.port == 0:
             return None
@@ -2424,6 +2475,13 @@ async def async_setup_live_entities(
         if cateye
         else None
     )
+    if last_frame_path:
+        import os
+
+        await hass.async_add_executor_job(
+            lambda: os.makedirs(os.path.dirname(last_frame_path), exist_ok=True)
+        )
+        relay.last_frame_path = last_frame_path
     async_add_entities(
         [
             Hp7LiveCamera(
