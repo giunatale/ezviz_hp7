@@ -1885,6 +1885,13 @@ class Hp7StreamRelay:
                         # only start on one, and x264's default interval is
                         # 250 frames (~16 s at 15 fps).
                         cmd += ["-force_key_frames", "expr:gte(t,n_forced*1)"]
+                        # Explicit level. The MPEG-PS input has a 90 kHz time
+                        # base and no fixed frame rate, so x264 derives the
+                        # level from that and signals 6.2. Phones and browsers
+                        # ignore it; Cast receivers (Nest Hub, Chromecast)
+                        # refuse to load a level they don't support. 4.1 covers
+                        # 1080p at 30 fps, above what peepholes send.
+                        cmd += ["-level:v", "4.1"]
                 else:
                     cmd += ["-c:v", "copy"]
                 if not self.peephole:
