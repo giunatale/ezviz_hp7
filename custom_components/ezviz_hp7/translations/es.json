@@ -206,6 +206,9 @@
       },
       "live": {
         "name": "En Vivo"
+      },
+      "live_sub": {
+        "name": "En vivo (sub-stream)"
       }
     },
     "number": {
@@ -293,7 +296,9 @@
           "stream_mode": "Modo de visualización (auto = por defecto: detecta el códec y elige solo — H.264 → webrtc, HEVC → mjpeg; webrtc = HA Stream/go2rtc, con audio + baja latencia pero no muestra HEVC sin transcodificar; mjpeg = ffmpeg por visor a motion-JPEG, agnóstico al códec y robusto para HEVC/multi-visor pero sin audio)",
           "stream_quality": "Calidad del stream (main = resolución completa; sub = subflujo de baja resolución del dispositivo, mucho más ligero de decodificar — úsalo si el vídeo acumula retraso en hosts poco potentes como una Raspberry Pi. Se aplica a la fuente local y a la nube)",
           "encryption_key": "Clave de cifrado (el código de verificación de 6 caracteres del dispositivo, en su etiqueta). Solo se necesita si el videoportero cifra el vídeo y la nube no entrega la clave: se usa para descifrar el stream y así ver el directo sin desactivar el cifrado.",
-          "diagnostic_dumps": "Volcados de diagnóstico (escribe dos archivos .bin en /config con el inicio del stream, solo para análisis al reportar un problema de vídeo. Déjalo en OFF: no sirve en uso normal)"
+          "diagnostic_dumps": "Volcados de diagnóstico (escribe dos archivos .bin en /config con el inicio del stream, solo para análisis al reportar un problema de vídeo. Déjalo en OFF: no sirve en uso normal)",
+          "sub_stream_camera": "Crear también una cámara sub-stream (una segunda cámara en vivo que usa siempre el substream de baja resolución del dispositivo, p. ej. para casting o Google Home; la cámara principal mantiene la calidad de arriba)",
+          "sub_stream_mode": "Entrega de la cámara sub-stream (same = como la cámara principal; o webrtc / mjpeg solo para esta cámara)"
         }
       }
     }

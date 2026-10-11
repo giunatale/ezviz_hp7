@@ -2193,6 +2193,7 @@ class Hp7LiveCamera(Camera):
         stream_mode: str = "mjpeg",
         ffmpeg_path: str = "ffmpeg",
         last_frame_path: str | None = None,
+        key: str = "live",
     ) -> None:
         super().__init__()
         self._serial = serial
@@ -2200,7 +2201,9 @@ class Hp7LiveCamera(Camera):
         self._relay = relay
         self._stream_mode = (stream_mode or "mjpeg").lower()
         self._ffmpeg_path = ffmpeg_path
-        self._attr_unique_id = f"{DOMAIN}_{serial}_live"
+        # "live" (main camera) or "live_sub" (opt-in sub-stream camera).
+        self._attr_unique_id = f"{DOMAIN}_{serial}_{key}"
+        self._attr_translation_key = key
         # Battery peepholes: stills never open a stream. Instead the last
         # frame of the most recent live view is kept (in memory and on disk,
         # so it survives restarts) and served as the still, like the EZVIZ
@@ -2489,17 +2492,61 @@ async def async_setup_live_entities(
             lambda: os.makedirs(os.path.dirname(last_frame_path), exist_ok=True)
         )
         relay.last_frame_path = last_frame_path
-    async_add_entities(
-        [
+    cameras = [
+        Hp7LiveCamera(
+            serial,
+            model,
+            relay,
+            stream_mode=effective_mode,
+            last_frame_path=last_frame_path,
+        )
+    ]
+
+    if data.get("sub_camera"):
+        # Opt-in second camera on the sub-stream: its own relay (own port,
+        # own cloud/LAN session, opened only while it is viewed), its own
+        # last-frame file, and either the main camera's resolved delivery
+        # mode ("same", no second codec probe) or its own.
+        sub_mode = str(data.get("sub_stream_mode") or "same")
+        if sub_mode not in ("webrtc", "mjpeg"):
+            sub_mode = effective_mode
+        sub_relay = Hp7StreamRelay(
+            api=api,
+            serial=serial,
+            channel=1,
+            listen_port=0,
+            bind_host=str(data.get("relay_bind") or "127.0.0.1"),
+            aggressive_mpegts=aggressive_mpegts,
+            video_codec=video_codec,
+            stream_source=stream_source,
+            stream_mode=sub_mode,
+            stream_quality="sub",
+            diagnostic_dumps=False,
+            encryption_key=str(data.get("encryption_key") or ""),
+            hass=hass,
+        )
+        sub_last_frame_path = None
+        if cateye:
+            sub_relay.idle_timeout = CATEYE_IDLE_TIMEOUT
+            sub_relay.peephole = True
+            sub_last_frame_path = hass.config.path(
+                ".storage", DOMAIN, f"{serial}_sub_last_frame.jpg"
+            )
+            sub_relay.last_frame_path = sub_last_frame_path
+        await sub_relay.start()
+        data["live_relay_sub"] = sub_relay
+        cameras.append(
             Hp7LiveCamera(
                 serial,
                 model,
-                relay,
-                stream_mode=effective_mode,
-                last_frame_path=last_frame_path,
+                sub_relay,
+                stream_mode=sub_mode,
+                last_frame_path=sub_last_frame_path,
+                key="live_sub",
             )
-        ]
-    )
+        )
+
+    async_add_entities(cameras)
 
 
 async def _resolve_auto_stream_mode(relay: "Hp7StreamRelay") -> str:
@@ -2542,3 +2589,6 @@ async def async_unload_live_entities(
     relay: Optional[Hp7StreamRelay] = data.pop("live_relay", None)
     if relay is not None:
         await relay.stop()
+    sub_relay: Optional[Hp7StreamRelay] = data.pop("live_relay_sub", None)
+    if sub_relay is not None:
+        await sub_relay.stop()

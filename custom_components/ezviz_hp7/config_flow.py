@@ -31,6 +31,10 @@ from .const import (
     CONF_DIAGNOSTIC_DUMPS,
     CONF_ENCRYPTION_KEY,
     CONF_STREAM_QUALITY,
+    CONF_SUB_CAMERA,
+    CONF_SUB_STREAM_MODE,
+    SUB_STREAM_MODE_SAME,
+    SUB_STREAM_MODES,
     STREAM_QUALITY_MAIN,
     STREAM_QUALITIES,
 )
@@ -370,6 +374,12 @@ class OptionsFlow(config_entries.OptionsFlow):
             ).lower()
             if quality not in STREAM_QUALITIES:
                 quality = STREAM_QUALITY_MAIN
+            sub_camera = bool(user_input.get(CONF_SUB_CAMERA, False))
+            sub_mode = str(
+                user_input.get(CONF_SUB_STREAM_MODE) or SUB_STREAM_MODE_SAME
+            ).lower()
+            if sub_mode not in SUB_STREAM_MODES:
+                sub_mode = SUB_STREAM_MODE_SAME
             dumps = bool(user_input.get(CONF_DIAGNOSTIC_DUMPS, False))
             enc_key = str(user_input.get(CONF_ENCRYPTION_KEY) or "").strip()
             return self.async_create_entry(
@@ -383,6 +393,8 @@ class OptionsFlow(config_entries.OptionsFlow):
                     CONF_STREAM_SOURCE: source,
                     CONF_STREAM_MODE: mode,
                     CONF_STREAM_QUALITY: quality,
+                    CONF_SUB_CAMERA: sub_camera,
+                    CONF_SUB_STREAM_MODE: sub_mode,
                     CONF_DIAGNOSTIC_DUMPS: dumps,
                     CONF_ENCRYPTION_KEY: enc_key,
                 },
@@ -471,6 +483,21 @@ class OptionsFlow(config_entries.OptionsFlow):
         if current_quality not in STREAM_QUALITIES:
             current_quality = STREAM_QUALITY_MAIN
 
+        current_sub_camera = bool(
+            self.config_entry.options.get(
+                CONF_SUB_CAMERA, self.config_entry.data.get(CONF_SUB_CAMERA, False)
+            )
+        )
+        current_sub_mode = str(
+            self.config_entry.options.get(
+                CONF_SUB_STREAM_MODE,
+                self.config_entry.data.get(CONF_SUB_STREAM_MODE, SUB_STREAM_MODE_SAME),
+            )
+            or SUB_STREAM_MODE_SAME
+        ).lower()
+        if current_sub_mode not in SUB_STREAM_MODES:
+            current_sub_mode = SUB_STREAM_MODE_SAME
+
         current_enc_key = str(
             self.config_entry.options.get(
                 CONF_ENCRYPTION_KEY,
@@ -507,6 +534,12 @@ class OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_STREAM_QUALITY, default=current_quality
                 ): vol.In(STREAM_QUALITIES),
+                vol.Optional(
+                    CONF_SUB_CAMERA, default=current_sub_camera
+                ): bool,
+                vol.Optional(
+                    CONF_SUB_STREAM_MODE, default=current_sub_mode
+                ): vol.In(SUB_STREAM_MODES),
                 vol.Optional(
                     CONF_ENCRYPTION_KEY, default=current_enc_key
                 ): str,
