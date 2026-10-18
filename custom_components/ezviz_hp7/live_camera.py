@@ -196,6 +196,9 @@ class _PreStartedSource:
         return getattr(self._src, "streamssn", "lan")
 
 VIDEO_STREAM_ID = 0xE0
+# A keyframe arriving this soon after the one the GOP cache restarted on is
+# kept together with it rather than replacing it (see _gop_update).
+KEYFRAME_PAIR_WINDOW = 0.5
 AUDIO_STREAM_ID = 0xC0
 
 FFMPEG_KILL_TIMEOUT = 2.0
@@ -744,6 +747,10 @@ class Hp7StreamRelay:
         # prepended before a decoder can use it (#51).
         self._param_sets: bytes = b""
         self._gop_lock = threading.Lock()
+        # When the cache last restarted on a keyframe (monotonic), see
+        # _gop_update: a second keyframe arriving right behind the first is
+        # kept with it instead of replacing it.
+        self._gop_restart_at = 0.0
         # Makes "update the GOP cache + fan the chunk out" (reader) and
         # "snapshot the cache + preload + subscribe" (new viewer) mutually
         # exclusive; see _publish_video.
@@ -1050,10 +1057,22 @@ class Hp7StreamRelay:
                 extracted = _extract_param_sets(chunk)
                 if extracted:
                     self._param_sets = extracted
-            if _has_keyframe(chunk):
+            now = time.monotonic()
+            if _has_keyframe(chunk) and not (
+                self._gop_buf and now - self._gop_restart_at < KEYFRAME_PAIR_WINDOW
+            ):
                 self._kf_markers_seen += 1
                 self._gop_buf = bytearray(chunk)
+                self._gop_restart_at = now
             elif self._gop_buf:
+                # Also taken for a keyframe that follows another one within
+                # KEYFRAME_PAIR_WINDOW: the HP5 opens every session with two
+                # keyframes 66 ms apart, and a viewer handed only the second
+                # one (cache restarted on it) sat on a grey picture until the
+                # next one, 4 s later, while viewers handed both decoded at
+                # once (captured 2026-10-18, slow vs fast opens).
+                if _has_keyframe(chunk):
+                    self._kf_markers_seen += 1
                 if len(self._gop_buf) + len(chunk) > GOP_CACHE_MAX:
                     # Oversized GOP: drop and wait for the next keyframe —
                     # new viewers get the pre-cache behaviour for this GOP.
