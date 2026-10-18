@@ -744,6 +744,10 @@ class Hp7StreamRelay:
         # prepended before a decoder can use it (#51).
         self._param_sets: bytes = b""
         self._gop_lock = threading.Lock()
+        # Makes "update the GOP cache + fan the chunk out" (reader) and
+        # "snapshot the cache + preload + subscribe" (new viewer) mutually
+        # exclusive; see _publish_video.
+        self._sub_lock = threading.Lock()
         # True while the active shared source is the CPD7 LAN pipeline.
         self._active_lan: bool = False
         self._idle_handle: Optional[asyncio.TimerHandle] = None
@@ -952,6 +956,66 @@ class Hp7StreamRelay:
             _LOGGER.debug("Hp7StreamRelay: PS dump write failed: %s", exc)
         finally:
             self._ps_dump_buf = bytearray()
+
+    def _publish_video(
+        self, qs: List["queue.Queue[Optional[bytes]]"], chunk: bytes
+    ) -> None:
+        """Add a video chunk to the GOP cache and fan it out, as one step.
+
+        Held under ``_sub_lock`` together with ``_subscribe``, so a chunk can
+        never fall between a new viewer's cached GOP and its live feed. When
+        it did, the viewer got that chunk twice (or not at all) and the frame
+        it belongs to was corrupted: right after the first keyframe, usually
+        that keyframe, so a WebRTC viewer showed grey or garbage until the
+        doorbell's next one, up to a full 4 s GOP later. Measured against
+        these methods with a busy reader (tools/race_test.py): about 4 in 10
+        joins got a duplicated chunk; none with the lock.
+        """
+        with self._sub_lock:
+            self._gop_update(chunk)
+            self._fanout(qs, chunk, video=True)
+
+    def _subscribe(
+        self,
+        lan: bool,
+        raw_q: "queue.Queue[Optional[bytes]]",
+        v_q: "queue.Queue[Optional[bytes]]",
+        a_q: "queue.Queue[Optional[bytes]]",
+    ) -> List[bytes]:
+        """Preload the cached GOP into a new viewer's queues, then subscribe.
+
+        Runs under ``_sub_lock`` (see ``_publish_video``). Returns the GOP
+        chunks that were preloaded.
+        """
+        with self._sub_lock:
+            gop = self._gop_snapshot()
+            if lan:
+                for chunk in gop:
+                    try:
+                        raw_q.put_nowait(chunk)
+                    except queue.Full:
+                        break
+                now0 = time.monotonic()
+                self._q_last_drain[id(raw_q)] = now0
+                self._q_last_drain[id(a_q)] = now0
+                if self.peephole and not gop:
+                    # Nothing cached yet: hold this viewer until the next
+                    # stream map instead of handing it a mid-GOP pack.
+                    self._q_resync.add(id(raw_q))
+                self._sub_raw_qs.append(raw_q)
+                self._sub_a_qs.append(a_q)  # de-mislabelled AAC audio
+            else:
+                for chunk in gop:
+                    try:
+                        v_q.put_nowait(chunk)
+                    except queue.Full:
+                        break
+                now0 = time.monotonic()
+                self._q_last_drain[id(v_q)] = now0
+                self._q_last_drain[id(a_q)] = now0
+                self._sub_v_qs.append(v_q)
+                self._sub_a_qs.append(a_q)
+        return gop
 
     def _gop_update(self, chunk: bytes) -> None:
         """Track the stream since the last random-access point (#37, #51).
@@ -1525,9 +1589,8 @@ class Hp7StreamRelay:
                     if not body:
                         continue
                     v_bytes += len(body)
-                    self._gop_update(body)
+                    self._publish_video(self._sub_raw_qs, body)
                     self._ps_dump(body)
-                    self._fanout(self._sub_raw_qs, body, video=True)
                     for stream_id, payload in parser.feed(body):
                         if stream_id == AUDIO_STREAM_ID and payload:
                             a_bytes += len(payload)
@@ -1564,7 +1627,6 @@ class Hp7StreamRelay:
                         continue
                     if stream_id == VIDEO_STREAM_ID:
                         v_bytes += len(payload)
-                        self._gop_update(payload)
                         self._es_dump(payload)
                         if self._detected_codec is None:
                             guess = _sniff_video_codec(payload)
@@ -1576,7 +1638,7 @@ class Hp7StreamRelay:
                                     guess, self._serial,
                                 )
                                 self._warn_if_hevc_on_webrtc(guess)
-                        self._fanout(self._sub_v_qs, payload, video=True)
+                        self._publish_video(self._sub_v_qs, payload)
                         if time.monotonic() >= next_v_log:
                             _LOGGER.info(
                                 "Hp7StreamRelay: broadcast video progress %d B "
@@ -1732,33 +1794,7 @@ class Hp7StreamRelay:
         # Preload BEFORE subscribing: chunks land in order ahead of the live
         # feed; a queue.Full mid-preload truncates the replay and the viewer
         # just falls back to waiting for the next keyframe.
-        gop = self._gop_snapshot()
-        if lan:
-            for chunk in gop:
-                try:
-                    raw_q.put_nowait(chunk)
-                except queue.Full:
-                    break
-            now0 = time.monotonic()
-            self._q_last_drain[id(raw_q)] = now0
-            self._q_last_drain[id(a_q)] = now0
-            if self.peephole and not gop:
-                # Nothing cached yet: hold this viewer until the next stream
-                # map instead of handing it a mid-GOP pack.
-                self._q_resync.add(id(raw_q))
-            self._sub_raw_qs.append(raw_q)
-            self._sub_a_qs.append(a_q)  # de-mislabelled AAC audio
-        else:
-            for chunk in gop:
-                try:
-                    v_q.put_nowait(chunk)
-                except queue.Full:
-                    break
-            now0 = time.monotonic()
-            self._q_last_drain[id(v_q)] = now0
-            self._q_last_drain[id(a_q)] = now0
-            self._sub_v_qs.append(v_q)
-            self._sub_a_qs.append(a_q)
+        gop = self._subscribe(lan, raw_q, v_q, a_q)
         if gop:
             _LOGGER.debug(
                 "Hp7StreamRelay: preloaded %d GOP chunks to new client",
