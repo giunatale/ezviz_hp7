@@ -1831,19 +1831,23 @@ class Hp7StreamRelay:
                     # #39 HPD7). A large analyzeduration/probesize is a ceiling,
                     # not a fixed wait — it starts as soon as params are known.
                     "-fflags", "+genpts", "-flags", "low_delay",
-                    # Peepholes: every viewer starts on a stream map + IDR with
-                    # parameter sets, so there is nothing to wait for. A large
-                    # probesize on a ~100 kbit/s stream is a wait of seconds.
-                    # Everyone else: 1 s. With a 10 s ceiling ffmpeg sat out the
-                    # whole window before its first output (measured: ~10.7 s
-                    # to first bytes on a 720p H.264 MPEG-PS at real-time
-                    # pace, ~1.7 s with 1 s), and the audio queue filled
-                    # meanwhile. Viewers start on the cached GOP (keyframe +
-                    # parameter sets), so 1 s of probing finds the stream.
+                    # Every viewer on this path starts on a stream map +
+                    # keyframe with its parameter sets (the CPD7 decoder only
+                    # emits from a keyframe, peephole sessions resync at the
+                    # program stream map, later viewers get the cached GOP),
+                    # so the probe window is mostly waiting.
+                    # Peepholes: minimal probing (small HEVC/H.264 frames).
+                    # Everyone else: 0.2 s, but a full 1 MB byte budget, so a
+                    # large HEVC IDR is always read whole before ffmpeg stops
+                    # probing (#39: a tiny probesize cut it off and the frame
+                    # size stayed unknown). Measured on an HP5 local capture at
+                    # real-time pace: first output 1.39 s at 1 s / 1 MB,
+                    # 0.58 s at 0.2 s / 1 MB; same output, and HA's stream
+                    # worker reads it identically (1280x720 + AAC).
                     *(
                         ["-analyzeduration", "0", "-probesize", "4096"]
                         if self.peephole
-                        else ["-analyzeduration", "1000000", "-probesize", "1000000"]
+                        else ["-analyzeduration", "200000", "-probesize", "1000000"]
                     ),
                     # NO wall-clock re-timestamping on this input. It is a
                     # real MPEG-PS container that already carries correct
