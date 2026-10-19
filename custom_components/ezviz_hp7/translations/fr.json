@@ -298,7 +298,8 @@
           "encryption_key": "Clé de chiffrement (le code de vérification à 6 caractères de l'appareil, sur son étiquette). Nécessaire uniquement si le portier chiffre la vidéo et que le cloud ne fournit pas la clé : elle sert alors à déchiffrer le flux, pour avoir le direct sans désactiver le chiffrement.",
           "diagnostic_dumps": "Vidages de diagnostic (écrit deux fichiers .bin dans /config capturant le début du flux, pour analyse lors d'un signalement de problème vidéo. Laissez sur OFF : inutile en usage normal)",
           "sub_stream_camera": "Créer aussi une caméra sub-stream (une seconde caméra en direct qui utilise toujours le flux secondaire basse résolution de l'appareil, p. ex. pour le casting ou Google Home ; la caméra principale garde la qualité ci-dessus)",
-          "sub_stream_mode": "Diffusion de la caméra sub-stream (same = comme la caméra principale ; ou webrtc / mjpeg pour cette caméra uniquement)"
+          "sub_stream_mode": "Diffusion de la caméra sub-stream (same = comme la caméra principale ; ou webrtc / mjpeg pour cette caméra uniquement)",
+          "cast_preroll": "Démarrage rapide Cast, secondes (0 = désactivé). En Cast ou avec Google Home, la première image de la caméra est maintenue fixe pendant cette durée avant la vidéo en direct, pour qu'un Nest Hub affiche une image dès le réveil de la caméra au lieu d'attendre le premier segment HLS de HA. 6 convient bien. Réencode la vidéo des sonnettes pour ce seul spectateur ; navigateurs et téléphones ne sont pas concernés"
         }
       }
     }

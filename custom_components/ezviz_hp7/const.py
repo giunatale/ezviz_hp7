@@ -101,6 +101,14 @@ SUB_STREAM_MODES = [SUB_STREAM_MODE_SAME, "webrtc", "mjpeg"]
 # enabling debug for anything else silently started writing files.
 CONF_DIAGNOSTIC_DUMPS = "diagnostic_dumps"
 
+# Cast fast start: seconds of the camera's first frame, held still, that HA's
+# stream worker (the HLS behind Cast and Google Home) gets ahead of the live
+# video, so a Nest Hub shows a picture as soon as the camera wakes instead of
+# after HA's first 6 s HLS segment. 0 = off (default). Costs a re-encode on
+# doorbells for that viewer only; browsers and phones are never affected.
+CONF_CAST_PREROLL = "cast_preroll"
+CAST_PREROLL_MAX = 12
+
 # Encryption key / verification code used to decrypt the video when the
 # device has Image/Video Encryption enabled. The cloud can hand this out via
 # get_cam_key, but that needs 2FA elevation and quietly fails otherwise

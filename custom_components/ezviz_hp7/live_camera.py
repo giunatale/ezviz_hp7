@@ -210,6 +210,23 @@ FFMPEG_KILL_TIMEOUT = 2.0
 # stream list: every go2rtc request in HA fails meanwhile (other cameras'
 # stills, WebRTC offers). go2rtc's http:// source records it.
 HTTP_REQUEST_TIMEOUT = 5.0
+# Cast fast start (option CONF_CAST_PREROLL): seconds of the first frame,
+# held still, that HA's stream worker gets ahead of the live video. HA's HLS, which is what Cast and Google Home
+# play, answers a player only once a whole segment exists (>= 5.9 s, cut by
+# media time): 12-17 s from cold on a Nest Hub, versus 1-2 s for a preloaded
+# camera whose segments already exist. Held frames count as media time, so
+# the first segment exists as soon as the first frame arrives (measured: 6 s
+# of media out 0.2 s after it), and the Hub's first picture is that frame,
+# then live video. A Nest Hub plays HLS about 20 s behind live on every
+# camera, preloaded or not, so the held frames fill that gap rather than add
+# to it; 6 s worked better there than 12. Only HA's stream worker is padded;
+# browsers and phones (go2rtc) never see it. Off by default.
+# Frame rate of the pre-roll (and of that client's output). tpad turns
+# the pre-roll duration into a frame count using the input's frame rate, and the
+# peephole path probes too little to know it: ffmpeg reports the 90 kHz
+# timestamp clock instead, so on a CP2 tpad set out to clone 1,080,000 frames
+# and the Hub gave up waiting. Both doorbells and peepholes send 15 fps.
+PREROLL_FPS = 15
 _HTTP_OK = (
     b"HTTP/1.1 200 OK\r\n"
     b"Content-Type: video/mp2t\r\n"
@@ -239,12 +256,27 @@ class _ClientProtocolSniffer:
                 asyncio.LimitOverrunError, OSError):
             return b""
 
-    def preamble(self) -> bytes:
-        """What to send before the stream: a 200 header for a GET, else nothing."""
+    def _request(self) -> bytes:
         if not self._task.done() or self._task.cancelled():
             return b""
-        request = self._task.result()
-        return _HTTP_OK if request.startswith(b"GET ") else b""
+        return self._task.result()
+
+    async def ready(self, timeout: float) -> None:
+        """Give an HTTP client's request up to ``timeout`` to be read."""
+        if not self._task.done():
+            await asyncio.wait({self._task}, timeout=timeout)
+
+    def preamble(self) -> bytes:
+        """What to send before the stream: a 200 header for a GET, else nothing."""
+        return _HTTP_OK if self._request().startswith(b"GET ") else b""
+
+    def is_ha_stream_worker(self) -> bool:
+        """HA's stream worker (PyAV, i.e. libavformat): the HLS behind Cast.
+
+        go2rtc identifies as Go-http-client; raw TCP clients send nothing.
+        """
+        request = self._request()
+        return request.startswith(b"GET ") and b"\r\nuser-agent: lavf/" in request.lower()
 
     def close(self) -> None:
         self._task.cancel()
@@ -683,6 +715,7 @@ class Hp7StreamRelay:
         stream_mode: str = "mjpeg",
         stream_quality: str = "main",
         diagnostic_dumps: bool = False,
+        cast_preroll: float = 0.0,
         encryption_key: str = "",
         hass: Any = None,
     ) -> None:
@@ -749,6 +782,8 @@ class Hp7StreamRelay:
         # dir so misframed NAL payloads (HPD5) can be hex-inspected without
         # a packet capture.
         self._diagnostic_dumps = bool(diagnostic_dumps)
+        # Cast fast start, seconds (0 = off); see the comment above PREROLL_FPS.
+        self.cast_preroll = max(0.0, float(cast_preroll or 0))
         self._configured_key = (encryption_key or "").strip()
         self._es_dump_buf = bytearray()
         self._es_dump_done = False
@@ -1810,6 +1845,7 @@ class Hp7StreamRelay:
     ) -> None:
         peer = writer.get_extra_info("peername")
         _LOGGER.debug("Hp7StreamRelay: client connected from %s", peer)
+        sniffer = _ClientProtocolSniffer(reader)
 
         wait = self._seconds_until_next_attempt()
         if wait > 0:
@@ -1818,6 +1854,7 @@ class Hp7StreamRelay:
                 "failures; refusing for another %.0fs)",
                 self._last_error, self._consecutive_failures, wait,
             )
+            sniffer.close()
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -1847,14 +1884,13 @@ class Hp7StreamRelay:
         # PREWARM_IDLE_TIMEOUT seconds after the last client leaves).
         await self.prewarm()
         if self._shared_vtm is None:
+            sniffer.close()
             try:
                 writer.close()
                 await writer.wait_closed()
             except Exception:
                 pass
             return
-
-        sniffer = _ClientProtocolSniffer(reader)
 
         # Subscribe to the broadcast. LAN serves one muxed MPEG-PS feed;
         # cloud serves split video/audio PES streams.
@@ -1930,6 +1966,19 @@ class Hp7StreamRelay:
                     # before a chunk has been sniffed, so don't wait for it.
                     or self.peephole
                 )
+                preroll = 0.0
+                if self.cast_preroll > 0 and self._stream_mode == "webrtc":
+                    await sniffer.ready(0.1)
+                    if sniffer.is_ha_stream_worker():
+                        # Held frames need an encoder; the 1 s keyframes
+                        # below also let segments close at 6 s, not on the
+                        # doorbell's 4 s grid (8 s).
+                        preroll = self.cast_preroll
+                        lan_transcode = True
+                        _LOGGER.debug(
+                            "Hp7StreamRelay: %.0f s pre-roll for HA's stream "
+                            "worker %s", preroll, peer,
+                        )
                 cmd = [
                     self._ffmpeg_path,
                     "-hide_banner", "-loglevel", "error",
@@ -1993,7 +2042,7 @@ class Hp7StreamRelay:
                         "-preset", "ultrafast", "-tune", "zerolatency",
                         "-pix_fmt", "yuv420p",
                     ]
-                    if self.peephole:
+                    if self.peephole or preroll:
                         # A keyframe every second: HLS players (casting) can
                         # only start on one, and x264's default interval is
                         # 250 frames (~16 s at 15 fps).
@@ -2005,9 +2054,18 @@ class Hp7StreamRelay:
                         # refuse to load a level they don't support. 4.1 covers
                         # 1080p at 30 fps, above what peepholes send.
                         cmd += ["-level:v", "4.1"]
+                    if preroll:
+                        cmd += [
+                            "-vf",
+                            f"fps={PREROLL_FPS},"
+                            f"tpad=start_duration={preroll}:start_mode=clone",
+                        ]
                 else:
                     cmd += ["-c:v", "copy"]
                 if not self.peephole:
+                    if preroll:
+                        # Same delay on the audio, as silence, to stay in sync.
+                        cmd += ["-af", f"adelay={int(preroll * 1000)}:all=1"]
                     cmd += ["-c:a", "aac", "-ar", "16000", "-ac", "1", "-b:a", "32k"]
                 cmd += [
                     "-max_interleave_delta", "0",
@@ -2558,6 +2616,7 @@ async def async_setup_live_entities(
         stream_quality=str(data.get("stream_quality") or "main"),
         diagnostic_dumps=bool(data.get("diagnostic_dumps", False)),
         encryption_key=str(data.get("encryption_key") or ""),
+        cast_preroll=float(data.get("cast_preroll") or 0),
         hass=hass,
     )
     cateye = bool(data.get("cateye"))
@@ -2641,6 +2700,7 @@ async def async_setup_live_entities(
             stream_quality="sub",
             diagnostic_dumps=False,
             encryption_key=str(data.get("encryption_key") or ""),
+            cast_preroll=float(data.get("cast_preroll") or 0),
             hass=hass,
         )
         sub_last_frame_path = None

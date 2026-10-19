@@ -29,6 +29,8 @@ from .const import (
     STREAM_MODE_AUTO,
     STREAM_MODES,
     CONF_DIAGNOSTIC_DUMPS,
+    CONF_CAST_PREROLL,
+    CAST_PREROLL_MAX,
     CONF_ENCRYPTION_KEY,
     CONF_STREAM_QUALITY,
     CONF_SUB_CAMERA,
@@ -381,6 +383,11 @@ class OptionsFlow(config_entries.OptionsFlow):
             if sub_mode not in SUB_STREAM_MODES:
                 sub_mode = SUB_STREAM_MODE_SAME
             dumps = bool(user_input.get(CONF_DIAGNOSTIC_DUMPS, False))
+            try:
+                preroll = int(user_input.get(CONF_CAST_PREROLL) or 0)
+            except (TypeError, ValueError):
+                preroll = 0
+            preroll = max(0, min(CAST_PREROLL_MAX, preroll))
             enc_key = str(user_input.get(CONF_ENCRYPTION_KEY) or "").strip()
             return self.async_create_entry(
                 title="",
@@ -397,6 +404,7 @@ class OptionsFlow(config_entries.OptionsFlow):
                     CONF_SUB_STREAM_MODE: sub_mode,
                     CONF_DIAGNOSTIC_DUMPS: dumps,
                     CONF_ENCRYPTION_KEY: enc_key,
+                    CONF_CAST_PREROLL: preroll,
                 },
             )
 
@@ -511,6 +519,16 @@ class OptionsFlow(config_entries.OptionsFlow):
                 self.config_entry.data.get(CONF_DIAGNOSTIC_DUMPS, False),
             )
         )
+        try:
+            current_preroll = int(
+                self.config_entry.options.get(
+                    CONF_CAST_PREROLL,
+                    self.config_entry.data.get(CONF_CAST_PREROLL, 0),
+                )
+                or 0
+            )
+        except (TypeError, ValueError):
+            current_preroll = 0
 
         schema = vol.Schema(
             {
@@ -540,6 +558,9 @@ class OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_SUB_STREAM_MODE, default=current_sub_mode
                 ): vol.In(SUB_STREAM_MODES),
+                vol.Optional(
+                    CONF_CAST_PREROLL, default=current_preroll
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=CAST_PREROLL_MAX)),
                 vol.Optional(
                     CONF_ENCRYPTION_KEY, default=current_enc_key
                 ): str,
