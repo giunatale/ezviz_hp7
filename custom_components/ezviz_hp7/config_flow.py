@@ -558,7 +558,10 @@ class OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_SUB_STREAM_MODE, default=current_sub_mode
                 ): vol.In(SUB_STREAM_MODES),
-                vol.Optional(
+                # Required (with its default): an optional integer with a small
+                # range renders as a slider plus an "include" checkbox, ticked
+                # whenever there is a value, 0 included, which reads as "on".
+                vol.Required(
                     CONF_CAST_PREROLL, default=current_preroll
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=CAST_PREROLL_MAX)),
                 vol.Optional(
