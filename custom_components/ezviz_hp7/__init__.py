@@ -28,6 +28,8 @@ from .const import (
     STREAM_MODE_MJPEG,
     STREAM_MODES,
     CONF_DIAGNOSTIC_DUMPS,
+    CONF_CAST_PREROLL,
+    CAST_PREROLL_MAX,
     CONF_ENCRYPTION_KEY,
     CONF_STREAM_QUALITY,
     CONF_SUB_CAMERA,
@@ -164,6 +166,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.data.get(CONF_DIAGNOSTIC_DUMPS, False),
         )
     )
+    try:
+        cast_preroll = int(
+            entry.options.get(
+                CONF_CAST_PREROLL, entry.data.get(CONF_CAST_PREROLL, 0)
+            )
+            or 0
+        )
+    except (TypeError, ValueError):
+        cast_preroll = 0
+    cast_preroll = max(0, min(CAST_PREROLL_MAX, cast_preroll))
 
     api: Hp7Api | None = None
     try:
@@ -243,6 +255,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "sub_stream_mode": sub_stream_mode,
         "diagnostic_dumps": diagnostic_dumps,
         "encryption_key": encryption_key,
+        "cast_preroll": cast_preroll,
         "coordinator": coordinator,
     }
 
