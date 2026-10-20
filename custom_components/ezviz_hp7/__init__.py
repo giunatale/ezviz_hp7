@@ -29,6 +29,7 @@ from .const import (
     STREAM_MODES,
     CONF_DIAGNOSTIC_DUMPS,
     CONF_ENCRYPTION_KEY,
+    CONF_SILENT_AUDIO,
     CONF_STREAM_QUALITY,
     CONF_SUB_CAMERA,
     CONF_SUB_STREAM_MODE,
@@ -158,6 +159,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         or ""
     ).strip()
+    silent_audio = bool(
+        entry.options.get(CONF_SILENT_AUDIO, entry.data.get(CONF_SILENT_AUDIO, True))
+    )
     diagnostic_dumps = bool(
         entry.options.get(
             CONF_DIAGNOSTIC_DUMPS,
@@ -226,6 +230,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "stream_quality": stream_quality,
         "sub_camera": sub_camera,
         "sub_stream_mode": sub_stream_mode,
+        "silent_audio": silent_audio,
         "diagnostic_dumps": diagnostic_dumps,
         "encryption_key": encryption_key,
         "coordinator": coordinator,

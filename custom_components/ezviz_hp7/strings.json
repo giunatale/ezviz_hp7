@@ -297,6 +297,7 @@
           "stream_quality": "Stream quality (main = full resolution; sub = the device's low-resolution substream, far cheaper to decode — use it if video accumulates delay on a weak host such as a Raspberry Pi. Applies to both the local and the cloud source)",
           "encryption_key": "Encryption key (usually the device's 6-character verification code, from its label). Only needed if the doorbell encrypts the video and the cloud won't hand the key over: it is then used to decrypt the stream so the live view works without turning encryption off.",
           "diagnostic_dumps": "Diagnostic dumps (writes two .bin files in /config capturing the start of the stream, for bitstream analysis when reporting a video problem. Leave OFF: not useful in normal operation)",
+          "silent_audio": "Add a silent audio track (peepholes have no microphone; the Google Home app on Android needs an audio track to play the camera over WebRTC)",
           "sub_stream_camera": "Also create a sub-stream camera (a second live camera that always uses the device's low-resolution substream, e.g. for casting or Google Home; the main camera keeps the quality above)",
           "sub_stream_mode": "Sub-stream camera delivery (same = as the main camera; or webrtc / mjpeg for this camera only)"
         }
