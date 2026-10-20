@@ -94,6 +94,11 @@ CONF_SUB_STREAM_MODE = "sub_stream_mode"
 SUB_STREAM_MODE_SAME = "same"
 SUB_STREAM_MODES = [SUB_STREAM_MODE_SAME, "webrtc", "mjpeg"]
 
+# CatEye (peephole) only: their stream is built without audio (no
+# microphone); this adds a silent track instead. The Google Home app on
+# Android only plays a WebRTC camera once it has an audio track.
+CONF_SILENT_AUDIO = "silent_audio"
+
 # Write raw stream captures to <config>/ezviz_hp7_{es,ps}_dump_<serial>.bin
 # for bitstream analysis when reporting a streaming bug. Off by default:
 # these are only useful while investigating, and they cost 192 KB per

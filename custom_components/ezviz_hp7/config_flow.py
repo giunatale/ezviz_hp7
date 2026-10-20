@@ -32,6 +32,7 @@ from .const import (
     CONF_CAST_PREROLL,
     CAST_PREROLL_MAX,
     CONF_ENCRYPTION_KEY,
+    CONF_SILENT_AUDIO,
     CONF_STREAM_QUALITY,
     CONF_SUB_CAMERA,
     CONF_SUB_STREAM_MODE,
@@ -389,9 +390,13 @@ class OptionsFlow(config_entries.OptionsFlow):
                 preroll = 0
             preroll = max(0, min(CAST_PREROLL_MAX, preroll))
             enc_key = str(user_input.get(CONF_ENCRYPTION_KEY) or "").strip()
+            extra = {}
+            if CONF_SILENT_AUDIO in user_input:  # shown for CatEye entries only
+                extra[CONF_SILENT_AUDIO] = bool(user_input[CONF_SILENT_AUDIO])
             return self.async_create_entry(
                 title="",
                 data={
+                    **extra,
                     CONF_MONITOR_SERIAL: monitor,
                     CONF_RELAY_PORT: relay_port,
                     CONF_RELAY_BIND: relay_bind,
@@ -530,6 +535,26 @@ class OptionsFlow(config_entries.OptionsFlow):
         except (TypeError, ValueError):
             current_preroll = 0
 
+        # CatEye (peephole) entries: their stream is built without audio; offer
+        # the silent track. Known once the entry is set up (see __init__).
+        is_cateye = bool(
+            self.hass.data.get(DOMAIN, {})
+            .get(self.config_entry.entry_id, {})
+            .get("cateye")
+        )
+        cateye_fields = {}
+        if is_cateye:
+            cateye_fields[
+                vol.Optional(
+                    CONF_SILENT_AUDIO,
+                    default=bool(
+                        self.config_entry.options.get(
+                            CONF_SILENT_AUDIO,
+                            self.config_entry.data.get(CONF_SILENT_AUDIO, True),
+                        )
+                    ),
+                )
+            ] = bool
         schema = vol.Schema(
             {
                 vol.Optional(CONF_MONITOR_SERIAL, default=current or ""): str,
@@ -555,6 +580,7 @@ class OptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_SUB_CAMERA, default=current_sub_camera
                 ): bool,
+                **cateye_fields,
                 vol.Optional(
                     CONF_SUB_STREAM_MODE, default=current_sub_mode
                 ): vol.In(SUB_STREAM_MODES),

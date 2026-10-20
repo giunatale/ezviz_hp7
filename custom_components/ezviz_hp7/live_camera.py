@@ -195,6 +195,20 @@ class _PreStartedSource:
     def streamssn(self) -> str:
         return getattr(self._src, "streamssn", "lan")
 
+# Silence for peephole streams, which are built without audio (no
+# microphone): see CONF_SILENT_AUDIO. A source filter rather than the lavfi
+# input device, so only libavfilter is needed; ffmpeg paces it against the
+# live video (audio starts with the video and follows it, timestamps
+# monotonic). -shortest ends the output with the video: silence never ends,
+# so without it ffmpeg would outlive a dead source and keep the viewer on a
+# frozen picture past the relay's stall watchdog. Measured: no added latency.
+SILENT_AUDIO = [
+    "-filter_complex", "anullsrc=r=16000:cl=mono[silence]",
+    "-map", "[silence]",
+    "-shortest",
+    "-c:a", "aac", "-ar", "16000", "-ac", "1", "-b:a", "32k",
+]
+
 VIDEO_STREAM_ID = 0xE0
 # A keyframe arriving this soon after the one the GOP cache restarted on is
 # kept together with it rather than replacing it (see _gop_update).
@@ -714,6 +728,7 @@ class Hp7StreamRelay:
         stream_source: str = "cloud",
         stream_mode: str = "mjpeg",
         stream_quality: str = "main",
+        silent_audio: bool = True,
         diagnostic_dumps: bool = False,
         cast_preroll: float = 0.0,
         encryption_key: str = "",
@@ -785,6 +800,8 @@ class Hp7StreamRelay:
         # Cast fast start, seconds (0 = off); see the comment above PREROLL_FPS.
         self.cast_preroll = max(0.0, float(cast_preroll or 0))
         self._configured_key = (encryption_key or "").strip()
+        # Peepholes only: a silent track instead of no audio (SILENT_AUDIO).
+        self.silent_audio = bool(silent_audio)
         self._es_dump_buf = bytearray()
         self._es_dump_done = False
         # Raw MPEG-PS dump + keyframe-marker counter (#41): the HPD5 "synced"
@@ -2025,6 +2042,8 @@ class Hp7StreamRelay:
                 ]
                 if self.peephole:
                     cmd += ["-map", "0:v:0"]  # video only, no audio track
+                    if self.silent_audio:
+                        cmd += SILENT_AUDIO
                 else:
                     cmd += [
                         "-analyzeduration", "200000", "-probesize", "200000",
@@ -2126,6 +2145,8 @@ class Hp7StreamRelay:
                 ]
                 if self.peephole:
                     cmd += ["-map", "0:v:0"]
+                    if self.silent_audio:
+                        cmd += SILENT_AUDIO
                 else:
                     cmd += [
                         "-analyzeduration", "200000", "-probesize", "200000",
@@ -2615,6 +2636,7 @@ async def async_setup_live_entities(
         stream_mode=stream_mode,
         stream_quality=str(data.get("stream_quality") or "main"),
         diagnostic_dumps=bool(data.get("diagnostic_dumps", False)),
+        silent_audio=bool(data.get("silent_audio", True)),
         encryption_key=str(data.get("encryption_key") or ""),
         cast_preroll=float(data.get("cast_preroll") or 0),
         hass=hass,
@@ -2699,6 +2721,7 @@ async def async_setup_live_entities(
             stream_mode=sub_mode,
             stream_quality="sub",
             diagnostic_dumps=False,
+            silent_audio=bool(data.get("silent_audio", True)),
             encryption_key=str(data.get("encryption_key") or ""),
             cast_preroll=float(data.get("cast_preroll") or 0),
             hass=hass,
